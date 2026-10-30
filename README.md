@@ -150,6 +150,61 @@ AI 发出去的评论是**公开的、删了也留过痕**。所以每发一条�
 > 开关位置：设置页「上下文与记忆」；DSH 里是「刷视频 → 设置」。切换即时生效，不用重启。
 > 想让它能接别人回复、又不留历史，就只开「回复评论」、上下文保持关闭——它会只针对对方那一句回应。
 
+## 常见问题（手机版）
+
+### 装完在设置里找不到「刷视频」，或者一直卡在「正在确认加载」
+
+先看 DSH「启动」标签页的日志。如果出现这两种之一，就是这个原因：
+
+```
+bili-console (dsh-bili-console): failed to import
+插件加载异常：dsh-bili-console-mobile
+```
+
+**根因**（2026-10-31 在真机上逐层排查出来的，四层都踩过）：
+
+1. **旧包残留登记**：`/root/.dsh/plugin-activations.json`、`plugin-updates.json` 里还留着旧包
+   `dsh-bili-console` 的加载记录 → DSH 启动时去找一个已经不存在的旧目录 → 失败。
+   **这层在插件外面，重装插件清不掉，必须手动清**（命令见下）。
+2. **没启用**：清完残留后状态可能是 `unconfirmed`，要在插件页手动打开开关。
+3. **`cordis.patch.yml` 的 entry name 与包名不一致** → 又去找旧包（本仓库已修）。
+4. **`client.js` 的 `__ModuleLoader__.load({ id })` 与包名不一致** → 前端 `Failed to load plugins`（本仓库已修）。
+
+清理残留登记（**会先自动备份**，只删旧包那个 key，别的插件不受影响）：
+
+```bash
+node -e '
+const fs=require("fs");
+function scrub(o){if(!o||typeof o!=="object"||Array.isArray(o))return;delete o["dsh-bili-console"];for(const k of Object.keys(o))scrub(o[k]);}
+for(const f of ["/root/.dsh/plugin-activations.json","/root/.dsh/plugin-updates.json"]){
+  if(!fs.existsSync(f))continue;
+  const raw=fs.readFileSync(f,"utf8");fs.writeFileSync(f+".bak-"+Date.now(),raw);
+  const j=JSON.parse(raw);scrub(j);fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n");
+}
+console.log("已清理旧包残留登记");'
+```
+
+清完 **重启 DSH**，再到插件页启用 `dsh-bili-console-mobile`。
+
+### 装完想知道插件到底有没有加载成功
+
+看插件自己的运行日志（最后几行有「已挂载」就是成功了）：
+
+```bash
+tail -5 ~/.dsh/bili-console/duty.log
+```
+
+### 版本号显示 v0.0.0 / 一直提示「有新版本」但其实没更新
+
+版本号以 `lib/version.mjs` 为准（手机上 `../package.json` 常常读不到）。
+若显示不一致，说明安装的包里 `lib/version.mjs` 缺失或版本没同步——重新安装最新包即可。
+
+### 点「网页版」没反应
+
+手机版会按顺序尝试：安卓 `am start`（→ 你系统设置里的默认浏览器）→ `cmd activity` →
+`termux-open` → `xdg-open` → Android Intent URI。全部失败才会显示一个可复制的地址面板。
+如果每次都落到最后那一步，去「设置 → 版本与更新」把更新源换成加速站再试。
+
 ## 开发阶段
 
 - [x] Phase 1 · 地基：打包规格、设置体系、章程、状态机、风控规则库、控制台 API
