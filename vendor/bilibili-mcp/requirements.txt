@@ -1,0 +1,8 @@
+# dsh-bili-console 运行 vendor/bilibili-mcp/mcp_server.py 所需的 Python 依赖。
+# 版本锁定自开发机（Python 3.12.9）。
+# 普通用户无需手动装：插件在首次登录 / 跑一轮时，会用自己创建的 venv 自动 `pip install -r` 本文件。
+# 🔴 mcp 必须锁 <2：2.x 的 server 没有 list_tools，起不来（踩过）。
+bilibili-api-python==17.4.2
+mcp==1.30.0
+aiohttp==3.14.5
+qrcode[pil]>=8.0

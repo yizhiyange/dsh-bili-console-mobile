@@ -1,0 +1,37 @@
+# 依赖与产物不进仓库
+node_modules/
+*.tmp
+*.bak-*
+.dsh-extract.json
+
+# 插件运行时家目录（配置/凭证/日志只在本机）
+home/
+.bili-console-home/
+
+# ─────────────────────────────────────────────────────────
+# 【重要】凭证与登录态 —— 这几个文件一旦提交，等于把账号交出去
+# ─────────────────────────────────────────────────────────
+**/bili_credential.json
+**/login_debug.json
+**/*credential*
+**/*.credentials*
+**/.env
+**/.env.*
+qrcode_login*.png
+
+# 运行时账本 / 日志（含真实 BV 号、发出去的评论内容）
+posted.json
+state.json
+seen.md
+duty.log
+out/
+threads/
+
+# 截图默认不进仓库：里面是本机真实账号信息（头像/昵称/UID/日报）
+# 想放效果图，请先打码，再把下面这行删掉
+docs/screenshots/
+
+# 系统杂项
+.DS_Store
+Thumbs.db
+desktop.ini
