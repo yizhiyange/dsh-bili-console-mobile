@@ -45,7 +45,7 @@ import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython } from './lib/pyenv.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
-import { VERSION as APP_VERSION } from './lib/version.mjs'
+import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
 // 一键自更新（下载 → 解压 → 替换，带进度）
 import { startSelfUpdate, selfUpdateSnapshot } from './lib/selfupdate.mjs'
 
@@ -235,7 +235,7 @@ export function apply(ctx, _config) {
     const st = loadState(home)
     const seen = parseSeen(existsSync(join(home, 'seen.md')) ? readFileSync(join(home, 'seen.md'), 'utf8') : '')
     const rep = readReport(home, dayKey())
-    const persona = resolvePersona(cfgNow.personaPrompt)
+    const persona = resolvePersona(cfgNow.personaPrompt, cfgNow.personaMaxLen)
     const win = { noon: inWindow({ noon: true }, new Date()) === 'noon', night: inWindow({ night: true }, new Date()) === 'night' }
     const login = loginStatus(home)
     const safeMode = !cfgNow.autoComment && (cfgNow.dmMode === 'off')
@@ -243,6 +243,7 @@ export function apply(ctx, _config) {
     return {
       ok: true, home, now: new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }),
       version: VERSION || '0.0.0',
+      pkg: PKG_NAME || '',
       update: snapshot(VERSION || '0.0.0'),
       selfUpdate: selfUpdateSnapshot(),
       haveYaml: true,

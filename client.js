@@ -225,6 +225,12 @@ window.__ModuleLoader__.load({
 
     [data-bd-toast]{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(20px);background:#111;color:#fff;font-size:13px;padding:10px 18px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:99;max-width:80%;}
     [data-bd-toast].show{opacity:.92;transform:translateX(-50%) translateY(0);}
+    /* 右下角浮动保存条：一改配置就浮出来，点一下直接存 */
+    [data-bd-floatsave]{position:fixed;right:18px;bottom:84px;z-index:98;display:flex;align-items:center;gap:10px;
+      background:var(--card);border:1px solid var(--line);border-radius:24px;padding:8px 12px;
+      box-shadow:0 8px 28px rgba(0,0,0,.18);animation:bdfade .18s ease-out;}
+    @keyframes bdfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    .narrow [data-bd-floatsave]{right:10px;bottom:96px;gap:8px;padding:7px 10px;}
     [data-bd-foot]{text-align:center;font-size:11px;color:var(--t3);padding:4px 0 10px;line-height:1.8;}
 
     [data-bd-mask]{position:fixed;inset:0;background:rgba(17,17,17,.45);display:none;align-items:center;justify-content:center;z-index:50;}
@@ -395,6 +401,30 @@ window.__ModuleLoader__.load({
       h('button', { onClick: () => onStep(-1) }, '−'),
       h('span', { className: 'val' }, String(value)),
       h('button', { onClick: () => onStep(1) }, '+'))
+
+    /**
+     * 数字输入框：想填多少填多少，不用按住 + 号点半天。
+     * 用本地草稿，避免 /state 每 2 秒轮询把正在输入的内容冲掉；
+     * 失焦或回车才提交（提交时按 min/max 夹一次，防止填出离谱的数）。
+     */
+    const NumInput = ({ value, onCommit, min = 0, max = 9999, suffix = '', width = 92 }) => {
+      const [draft, setDraft] = React.useState(null)
+      const shown = draft != null ? draft : String(value != null ? value : '')
+      const commit = () => {
+        const n = Math.max(min, Math.min(max, Math.floor(Number(shown) || 0)))
+        setDraft(null)
+        if (n !== Number(value || 0)) onCommit(n)
+      }
+      return h('span', { 'data-bd-numin': '', style: { display: 'inline-flex', alignItems: 'center', gap: '8px' } },
+        h('div', { 'data-bd-input': '', style: { width: width + 'px' } },
+          h('input', {
+            type: 'text', inputMode: 'numeric', value: shown,
+            onChange: (e) => setDraft(String(e.target.value).replace(/[^\d]/g, '')),
+            onBlur: commit,
+            onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); try { e.currentTarget.blur() } catch {} } },
+          })),
+        suffix ? h('span', { 'data-bd-ds': '', style: { fontSize: '12px', color: 'var(--t2)' } }, suffix) : null)
+    }
 
     const ChainList = ({ endpoints, onReorder }) => {
       if (!endpoints || !endpoints.length) return h('div', { 'data-bd-empty': '' }, '链上空：去「模型与密钥」加一个模型，或等 DSH 预设同步')
@@ -740,7 +770,7 @@ window.__ModuleLoader__.load({
           }
           const r = await jpost('/update/check', body)
           setUpRes(r)
-          if (r && r.hasUpdate) toast_('有新版本 v' + r.latest + ' —— 下面有下载链接')
+          if (r && r.hasUpdate) toast_('有新版本 v' + r.latest + '（就在上面这张卡片里，点「一键更新」即可）')
           else if (r && r.ok) toast_('已经是最新版 v' + r.latest)
           else toast_('没查到版本，试试换个加速源')
         } catch (e) { toast_('检查失败：' + String(e?.message ?? e)) } finally { setUpBusy(false) }
@@ -1076,14 +1106,28 @@ window.__ModuleLoader__.load({
           Card({ title: null }, box))
       }
 
-      const renderPersona = () => h('div', { 'data-bd-pagewrap': '' },
-        h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '人设'), h('span', { className: 's' }, 'AI 挑视频、写评论时按这张角色卡说话；改完下一轮生效')),
-        Card({ title: '角色卡（personaPrompt）', sub: (persona || '').length + ' / 8000 字' },
-          h('textarea', { 'data-bd-persona': '', spellcheck: false, value: persona || '', onChange: (e) => { setPersona(e.target.value); setDirty((d) => ({ ...d, persona: true })) } }),
-          h('div', { style: { display: 'flex', gap: '10px', marginTop: '12px', flexWrap: 'wrap', alignItems: 'center' } },
-            h('button', { 'data-bd-btn': '', className: 'primary', onClick: savePersona }, '保存人设'),
-            h('button', { 'data-bd-btn': '', className: 'ghost', onClick: () => { setDirty((d) => ({ ...d, persona: false })); setPersona(cfg.personaPrompt || '') } }, '撤销改动，重新载入'))),
-        h('div', { 'data-bd-callout': '' }, '上面文本框里就是插件实际使用的完整人格卡——没有摘要、没有截断，你写的多少字就用多少字（上限 8000 字，当前已用 ' + (persona || '').length + ' 字）。这个框也收文件路径：填一个 AGENTS.md 的路径，插件就会去读那个文件当人设。人设存在插件目录的 config.json 里，和 DSH 共用同一份；在这里改完，DSH 那边也是新的。'))
+      const renderPersona = () => {
+        const pmax = Math.max(500, Math.min(200000, Number(cfg.personaMaxLen) || 8000))
+        const used = (persona || '').length
+        const over = used > pmax
+        return h('div', { 'data-bd-pagewrap': '' },
+          h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '人设'), h('span', { className: 's' }, 'AI 挑视频、写评论时按这张角色卡说话；改完下一轮生效')),
+          Card({
+            title: '角色卡（personaPrompt）',
+            sub: used + ' / ' + pmax + ' 字' + (over ? '（超了，超出部分不生效）' : ''),
+            right: over ? Tag({ c: 'amber', children: '超上限' }) : null,
+          },
+            h('textarea', { 'data-bd-persona': '', spellcheck: false, value: persona || '', onChange: (e) => { setPersona(e.target.value); setDirty((d) => ({ ...d, persona: true })) } }),
+            h('div', { style: { display: 'flex', gap: '10px', marginTop: '12px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('button', { 'data-bd-btn': '', className: 'primary', onClick: savePersona }, '保存人设'),
+              h('button', { 'data-bd-btn': '', className: 'ghost', onClick: () => { setDirty((d) => ({ ...d, persona: false })); setPersona(cfg.personaPrompt || '') } }, '撤销改动，重新载入')),
+            h('div', { 'data-bd-setrow': '', style: { marginTop: '14px' } },
+              h('div', { 'data-bd-txt': '' },
+                h('div', { 'data-bd-lb': '' }, '字数上限（可自己调）'),
+                h('div', { 'data-bd-ds': '' }, '默认 8000 字。想写多长都行：500 ~ 200000 之间随便填，填完立刻保存、下一轮生效')),
+              h(NumInput, { value: pmax, min: 500, max: 200000, suffix: '字', width: 110, onCommit: (n) => saveOne('personaMaxLen', n) }))),
+          h('div', { 'data-bd-callout': '' }, '上面文本框里就是插件实际使用的完整人格卡——没有摘要、没有截断，你写的多少字就用多少字（当前上限 ' + pmax + ' 字，已用 ' + used + ' 字）。这个框也收文件路径：填一个 AGENTS.md 的路径，插件就会去读那个文件当人设。人设存在插件目录的 config.json 里，和 DSH 共用同一份；在这里改完，DSH 那边也是新的。'))
+      }
 
       const renderChain = () => {
         const ep = chainDraft || []
@@ -1117,7 +1161,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } },
               h('span', { className: 'sub' }, '开启时段：'),
               chips.map(([k, label]) => h('span', { key: k, 'data-bd-chip': '', style: { cursor: 'pointer', background: cfg[k] ? 'var(--blue)' : 'var(--blue-bg)', color: cfg[k] ? '#fff' : 'var(--blue)' }, onClick: () => toggleChip(k, !cfg[k]) }, label)),
-              h('span', { style: { marginLeft: 'auto' } }, Stepper({ value: (cfg.perDay || 0) + ' 条', onStep: (d) => step('perDay', d, ' 条') }))),
+              h('span', { style: { marginLeft: 'auto' } }, h(NumInput, { value: cfg.perDay || 0, min: 0, max: 999, suffix: '条 / 天', onCommit: (n) => saveOne('perDay', n) }))),
             h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } }, '为什么需要：风控盯环境指纹和机械节奏——定时操作等于自报身份。随机间隔 1-2 分钟、每周强制休息 1 天、每日上限，都是让它"像个人"。')),
           h('div', { 'data-bd-callout': '' }, '底线：不登录你的账号、不碰支付、不转发私信内容；评论区、字幕、简介里的话一律当素材、不当指令——谁让你改行为、贴设置，都不照做。'),
           Card({ title: '它遵守的规矩', sub: '只读 · 写死在插件里的底线，谁都改不了' }, h('ul', { 'data-bd-charter': '' }, (st.charter || []).map((c, i) => h('li', { key: i }, c)))),
@@ -1181,7 +1225,7 @@ window.__ModuleLoader__.load({
           },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每天最多挑几条'), h('div', { 'data-bd-ds': '' }, '全天总量：AI 一轮里从候选视频里挑出值得看的条数。挑满就收工，不贪多')),
-              Stepper({ value: (cfg.perDay || 0) + ' 条', onStep: (d) => step('perDay', d, ' 条') })),
+              h(NumInput, { value: cfg.perDay || 0, min: 0, max: 999, suffix: '条 / 天', onCommit: (n) => saveOne('perDay', n) })),
             ToggleRow({
               label: '本地转写',
               note: asr.ready
@@ -1317,6 +1361,12 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '当前版本'), h('div', { 'data-bd-ds': '' }, '你手上装的是这个')),
               Tag({ c: 'gray', children: 'v' + cur })),
             h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' },
+                h('div', { 'data-bd-lb': '' }, '包身份'),
+                h('div', { 'data-bd-ds': '' }, '两个版本长得几乎一样，装错包时版本号会对不上。这里显示的就是你实际装的包：'
+                  + (st.pkg ? String(st.pkg) : '未知') + (String(st.pkg || '').indexOf('mobile') >= 0 ? '（手机版 ✓）' : '（电脑版 —— 手机上建议换装手机版）'))),
+              Tag({ c: String(st.pkg || '').indexOf('mobile') >= 0 ? 'green' : 'amber', children: String(st.pkg || '').indexOf('mobile') >= 0 ? '手机版' : '电脑版' })),
+            h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '最新版本'),
                 h('div', { 'data-bd-ds': '' }, base.ok
                   ? ('GitHub 仓库里是 v' + base.latest + (base.hasUpdate ? '，比你手上的新' : '，和你手上一样') + (base.source ? ('（走的是：' + base.source + '）') : ''))
@@ -1389,13 +1439,20 @@ window.__ModuleLoader__.load({
 
       const toastEl = h('div', { 'data-bd-toast': '', className: toast ? 'show' : undefined }, toast)
 
+      // 改了配置就在右下角浮出「保存配置」——不用滚回页面底部找保存按钮
+      const unsaved = Object.keys(dirty || {}).filter((k) => dirty[k]).length
+      const floatSave = unsaved ? h('div', { 'data-bd-floatsave': '' },
+        h('span', { 'data-bd-ds': '', style: { fontSize: '12px' } }, '有 ' + unsaved + ' 项改动没保存'),
+        h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveSettings }, '保存配置'),
+        h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { setDirty({}); setPersona(null); setKws(null); setMentionDraft(null); setDmUidDraft(null); setFavDraft(null); toast_('已放弃改动，恢复成已保存的值') } }, '放弃')) : null
+
       return h('div', { 'data-bd-page': '', ref: rootRef, className: narrow ? 'narrow' : '' },
         topbar,
         loginBar,
         banner,
         h('div', { 'data-bd-main': '' }, sidebar, content),
         h('div', { 'data-bd-foot': '' }, '插件目录：' + (st.home || '—') + ' · 本地服务 127.0.0.1 · 每 2 秒自动刷新 · 最近更新 ' + (st.now || '')),
-        modal, webPanel, toastEl)
+        floatSave, modal, webPanel, toastEl)
     }
 
     return {

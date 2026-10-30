@@ -383,7 +383,8 @@ img.avatar{border:1px solid var(--line);}
       ' · 私信' + ((c.dmMode && c.dmMode !== 'off') ? '开' : '关') + '</div>' +
       '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">' +
       '<button class="btn ' + (lg().loggedIn ? 'ghost' : 'primary') + ' sm" data-act="login">' + (lg().loggedIn ? '重新登录' : '扫码登录') + '</button>' +
-      '<button class="btn ghost sm" data-act="dm">查私信</button></div>');
+      '<button class="btn ghost sm" data-act="dm">查私信</button>' +
+      (lg().loggedIn ? '<button class="btn ghost sm" data-act="logout">退出登录</button>' : '') + '</div>');
 
     var progCard = card('', '', '',
       '<div class="note" style="margin:0">今日进度</div>' +
@@ -526,9 +527,10 @@ img.avatar{border:1px solid var(--line);}
 
   function renderPersona() {
     var v = drafting.personaPrompt != null ? drafting.personaPrompt : (cfg().personaPrompt || '');
-    return card('人设（角色卡）', '它写评论时会照着这个调子说话',
-      '<span class="tag gray" id="pcount">' + v.length + ' / 8000 字</span>',
-      '<textarea data-draft="personaPrompt" maxlength="8000" placeholder="例：三十岁程序员，说话短、爱吐槽但不说脏话；喜欢具体的技术细节，讨厌营销话术。" ' +
+    var pmax = Math.max(500, Math.min(200000, Number(cfg().personaMaxLen) || 8000));
+    return card('人设（角色卡）', '它写评论时会照着这个调子说话（上限 ' + pmax + ' 字，可在 DSH 设置里调）',
+      '<span class="tag gray" id="pcount">' + v.length + ' / ' + pmax + ' 字</span>',
+      '<textarea data-draft="personaPrompt" maxlength="' + pmax + '" placeholder="例：三十岁程序员，说话短、爱吐槽但不说脏话；喜欢具体的技术细节，讨厌营销话术。" ' +
       'style="width:100%;min-height:420px;border:1px solid var(--line);border-radius:8px;padding:14px;font-size:13px;line-height:1.9;outline:none;resize:vertical;background:var(--card);color:var(--t1)">' + esc(v) + '</textarea>' +
       '<div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary sm" data-act="savepersona">保存人设</button>' +
       '<button class="btn ghost sm" data-act="resetpersona">撤销改动</button></div>');
@@ -865,6 +867,11 @@ img.avatar{border:1px solid var(--line);}
       return;
     }
     if (act === 'login') return startLogin();
+    if (act === 'logout') {
+      if (!confirm('退出当前 B站 账号？退出后想再刷就要重新扫码（正好可以换别的号扫）。')) return;
+      post('/logout', {}).then(function (r) { toast(r.ok ? '已退出登录，现在可以扫码换账号了' : ('退出失败：' + (r.error || ''))); paint(); });
+      return;
+    }
   });
 
   document.addEventListener('input', function (ev) {
@@ -872,7 +879,7 @@ img.avatar{border:1px solid var(--line);}
     if (el.dataset && el.dataset.draft) {
       drafting[el.dataset.draft] = el.value;
       if (el.dataset.draft === 'personaPrompt') {
-        var cnt = $('#pcount'); if (cnt) cnt.textContent = el.value.length + ' / 8000 字';
+        var cnt = $('#pcount'); if (cnt) { var pm = Math.max(500, Math.min(200000, Number(cfg().personaMaxLen) || 8000)); cnt.textContent = el.value.length + ' / ' + pm + ' 字' }
       }
     }
   });
