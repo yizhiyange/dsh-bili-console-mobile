@@ -13,7 +13,7 @@
 
 - insert:
     - id: bili-console
-      name: dsh-bili-console
+      name: dsh-bili-console-mobile
       config:
         # 真正的用户配置在插件自己的 config 里（设置页可改），这里只放默认值
         enabled: true

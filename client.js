@@ -22,7 +22,7 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-bili-console',
+  id: 'dsh-bili-console-mobile',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -868,7 +868,7 @@ window.__ModuleLoader__.load({
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
         h('div', { 'data-bd-spacer': '' }),
-        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
+        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
       const renderOverview = () => {
@@ -1402,10 +1402,10 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         const style = document.createElement('style')
-        style.setAttribute('data-plugin-css', 'dsh-bili-console')
+        style.setAttribute('data-plugin-css', 'dsh-bili-console-mobile')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-bili-console: 控制台样式')
+        ctx.effect(() => () => style.remove(), 'dsh-bili-console-mobile: 控制台样式')
 
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
