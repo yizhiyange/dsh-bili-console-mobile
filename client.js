@@ -503,6 +503,9 @@ window.__ModuleLoader__.load({
       const [vUrl, setVUrl] = React.useState('')
       const [vModel, setVModel] = React.useState('')
       const [vKey, setVKey] = React.useState('')
+      // 识图模型：用户一动过就不再被 2 秒轮询覆盖（visionTouched）；visionDirty 只用来提示"还没保存"
+      const [visionTouched, setVisionTouched] = React.useState(false)
+      const [visionDirty, setVisionDirty] = React.useState(false)
       const [newKw, setNewKw] = React.useState('')
       // 设置页纯文本/数字输入：用本地草稿，避免被 2 秒轮询的 state 覆盖（与 keyword/persona 同策略）
       const [mentionDraft, setMentionDraft] = React.useState(null)
@@ -559,9 +562,10 @@ window.__ModuleLoader__.load({
       const cfg = st?.settings || {}
 
       // 识图模型草稿：仅在未手动改过时从服务端同步
+      // ⚠️ 之前漏了「用户改过」这个标记，导致刚打几个字就被 2 秒轮询重置回空值（2026-10-31 修）
       React.useEffect(() => {
-        if (st && !dirty.vision) { const v = cfg.visionModel || {}; setVUrl(v.apiUrl || ''); setVModel(v.modelName || ''); setVKey(v.apiKey || '') }
-      }, [st, dirty.vision])
+        if (st && !visionTouched) { const v = cfg.visionModel || {}; setVUrl(v.apiUrl || ''); setVModel(v.modelName || ''); setVKey(v.apiKey || '') }
+      }, [st, visionTouched])
 
       // 人设草稿：仅在未手动改过时从服务端同步
       React.useEffect(() => {
@@ -656,8 +660,11 @@ window.__ModuleLoader__.load({
         } catch (e) { toast_('失败：' + String(e?.message ?? e)) }
       }
       const saveVision = async (v) => {
-        try { const r = await jpost('/settings', { visionModel: v }); toast_(r.ok ? '识图模型已保存' : ('失败：' + (r.error || ''))) }
-        catch (e) { toast_('失败：' + String(e?.message ?? e)) }
+        try {
+          const r = await jpost('/settings', { visionModel: v })
+          toast_(r.ok ? '识图模型已保存' : ('失败：' + (r.error || '')))
+          if (r.ok) setVisionDirty(false)
+        } catch (e) { toast_('失败：' + String(e?.message ?? e)) }
       }
       const savePersona = async () => {
         try { const r = await jpost('/settings', { personaPrompt: String(persona || '').trim() }); toast_(r.ok ? '人设已保存，下一轮生效' : ('失败：' + (r.error || ''))); if (r.ok) setDirty((d) => ({ ...d, persona: false })) }
@@ -673,6 +680,8 @@ window.__ModuleLoader__.load({
           dmWatch: cfg.dmWatch, dmWatchMinutes: Number(cfg.dmWatchMinutes || 0), dmReplyPerDay: Number(cfg.dmReplyPerDay || 0),
           reportLevel: cfg.reportLevel, favFolderId: Number(favDraft != null ? favDraft : (cfg.favFolderId || 0)),
         }
+        // 人设是「脏」的也要一起存——否则点「保存配置」会把 dirty 清掉，但人设其实没存进去（静默丢改动，2026-10-31 修）
+        if (dirty.persona && persona != null) body.personaPrompt = String(persona).trim()
         try { const r = await jpost('/settings', body); toast_(r.ok ? ('已保存：' + ((r.changed || []).join('、')) + '（下一轮生效）') : ('失败：' + (r.error || ''))); if (r.ok) setDirty({}) }
         catch (e) { toast_('失败：' + String(e?.message ?? e)) }
       }
@@ -1275,15 +1284,16 @@ window.__ModuleLoader__.load({
           },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API 地址'), h('div', { 'data-bd-ds': '' }, '智谱就是 https://open.bigmodel.cn/api/paas/v4')),
-              Input({ value: vUrl || '', onChange: setVUrl, placeholder: 'https://open.bigmodel.cn/api/paas/v4' })),
+              Input({ value: vUrl || '', onChange: (v) => { setVUrl(v); setVisionTouched(true); setVisionDirty(true) }, placeholder: 'https://open.bigmodel.cn/api/paas/v4' })),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '模型名'), h('div', { 'data-bd-ds': '' }, '免费视觉模型：glm-4v-flash / glm-4.6v-flash')),
-              Input({ value: vModel || '', onChange: setVModel, placeholder: 'glm-4v-flash' })),
+              Input({ value: vModel || '', onChange: (v) => { setVModel(v); setVisionTouched(true); setVisionDirty(true) }, placeholder: 'glm-4v-flash' })),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API Key'), h('div', { 'data-bd-ds': '' }, '留空 = 沿用已经存过的 key，不会清掉')),
-              Input({ value: vKey || '', onChange: setVKey, placeholder: '留空沿用已存的 key', type: 'password' })),
-            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '4px' } },
+              Input({ value: vKey || '', onChange: (v) => { setVKey(v); setVisionTouched(true); setVisionDirty(true) }, placeholder: '留空沿用已存的 key', type: 'password' })),
+            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: () => saveVision({ apiUrl: String(vUrl || '').trim(), modelName: String(vModel || '').trim(), apiKey: String(vKey || '').trim() || ((cfg.visionModel || {}).apiKey || '') }) }, '保存识图模型'),
+              visionDirty ? Tag({ c: 'amber', children: '改动还没保存' }) : null,
               h('span', { 'data-bd-ds': '' }, '配了以后：没字幕的视频会用封面图补一点画面信息'))))
         }
 
