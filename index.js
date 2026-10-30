@@ -21,7 +21,7 @@
  * ============================================================================
  */
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import {
@@ -46,6 +46,8 @@ import { ensureVenv, venvStatus, resolvePython } from './lib/pyenv.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION } from './lib/version.mjs'
+// 一键自更新（下载 → 解压 → 替换，带进度）
+import { startSelfUpdate, selfUpdateSnapshot } from './lib/selfupdate.mjs'
 
 // ⭐ 从宿主那棵树取 schemastery（拿不到就降级，绝不让一个 import 拖死整条插件）
 const hostDeps = await loadHostDeps()
@@ -101,6 +103,11 @@ const PKG = (() => {
  * 两个地方不一致时，这里会在日志里提醒一句。
  */
 const VERSION = APP_VERSION
+
+/** 插件代码目录（一键自更新就往这里换文件）。读不到就自动禁用自更新，不影响其它功能。 */
+const PLUGIN_DIR = (() => {
+  try { const u = import.meta.url; return u && u.startsWith('file:') ? dirname(fileURLToPath(u)) : '' } catch { return '' }
+})()
 
 const API_PREFIX = '/api/bili-console'
 const PAGE_PREFIX = '/bili-console'
@@ -237,6 +244,7 @@ export function apply(ctx, _config) {
       ok: true, home, now: new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }),
       version: VERSION || '0.0.0',
       update: snapshot(VERSION || '0.0.0'),
+      selfUpdate: selfUpdateSnapshot(),
       haveYaml: true,
       safeMode, noAdapter: false,
       status: { phase: '值守中', label: guardian.active() ? '风控冷却中' : '控制台在线', tone: guardian.active() ? 'warn' : 'ok' },
@@ -302,6 +310,15 @@ export function apply(ctx, _config) {
       if (b.mode !== undefined || b.custom !== undefined) setUpdateOption(home, { mode: b.mode, custom: b.custom })
       const r = await checkUpdate({ current: VERSION || '0.0.0', home, force: b.force !== false })
       return sendJson(res, 200, { ok: true, ...r })
+    }
+    // 一键自更新：点了就自己下载新版并替换文件（进度看 /state 的 selfUpdate，每 2 秒刷新）
+    if (req.method === 'POST' && path === '/update/apply') {
+      const b = await readBody(req)
+      const r = startSelfUpdate({ pluginDir: PLUGIN_DIR, custom: b.custom || '' })
+      return sendJson(res, 200, { ok: true, ...r })
+    }
+    if (req.method === 'GET' && path === '/update/progress') {
+      return sendJson(res, 200, { ok: true, ...selfUpdateSnapshot() })
     }
     if (req.method === 'GET' && path === '/rawlog') {
       let lines = []

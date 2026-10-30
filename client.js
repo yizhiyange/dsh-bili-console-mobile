@@ -121,6 +121,7 @@ window.__ModuleLoader__.load({
     [data-bd-btn].sm{padding:5px 10px;font-size:11px;}
     [data-bd-btn]:disabled{opacity:.45;cursor:not-allowed;}
     [data-bd-link]{color:var(--blue);font-size:12px;font-weight:600;background:none;} [data-bd-link]:hover{text-decoration:underline;}
+    [data-bd-upbar]{height:8px;background:var(--gray-bg);border-radius:4px;overflow:hidden;flex:1;min-width:120px;} [data-bd-upbar]>i{display:block;height:100%;background:var(--blue);border-radius:4px;transition:width .4s;}
     [data-bd-weburl-link]{display:inline-block;margin:6px 0;color:var(--blue);font-weight:600;font-size:14px;word-break:break-all;}
     [data-bd-weburl-link]:hover{text-decoration:underline;}
     [data-bd-weburl]{width:100%;height:40px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:var(--gray-bg);font-size:13px;color:var(--t1);}
@@ -744,6 +745,14 @@ window.__ModuleLoader__.load({
           else toast_('没查到版本，试试换个加速源')
         } catch (e) { toast_('检查失败：' + String(e?.message ?? e)) } finally { setUpBusy(false) }
       }
+      /** 一键自更新：让插件自己下载新版并替换文件（进度走 /state 的 selfUpdate，2 秒一刷） */
+      const applyUpdate = async () => {
+        try {
+          const r = await jpost('/update/apply', { custom: upCustom != null ? upCustom : ((st.update || {}).custom || '') })
+          if (r && r.ok && !r.error) toast_('开始更新了，看下面的进度条')
+          else toast_('没启动成：' + ((r && r.error) || '未知原因'))
+        } catch (e) { toast_('启动更新失败：' + String(e?.message ?? e)) }
+      }
       const runNow = async () => { try { const r = await jpost('/run/now', { force: true }); toast_(r.message || (r.ok ? '已开始' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
       /** 清空所有视频的对话上下文（thread 模式产物） */
       const clearMemory = async () => {
@@ -1294,6 +1303,8 @@ window.__ModuleLoader__.load({
           const srcList = [['auto', '自动（挨个试，通了就用）'], ...(base.sources || []).map((s) => [s.id, s.label])]
           const triedList = base.tried || []
           const autoOn = base.autoCheck !== false
+          const job = st.selfUpdate || {}
+          const jobRunning = Boolean(job.running)
           blocks.push(Card({
             title: '版本与更新',
             sub: 'DSH 自带的「检查更新」更新的是 DSH 软件本身，这个是专门给本插件用的',
@@ -1312,9 +1323,16 @@ window.__ModuleLoader__.load({
                   : '没连上 GitHub。换下面的加速源再点一次「立即检查更新」')),
               Tag({ c: base.hasUpdate ? 'amber' : (base.ok ? 'green' : 'gray'), children: base.ok ? ('v' + base.latest) : '未知' })),
             base.hasUpdate ? h('div', { 'data-bd-note': '', style: { margin: '0 0 12px' } },
-              h('div', null, '发现新版本 v' + base.latest + '。下载后重新导入安装包即可，你原来的配置和登录凭证不会被覆盖：'),
-              h('div', { style: { marginTop: '8px', display: 'flex', gap: '12px', flexWrap: 'wrap' } },
-                h('a', { 'data-bd-link': '', href: base.zipUrl, target: '_blank', rel: 'noopener' }, '下载最新代码 zip ↗'),
+              h('div', null, '发现新版本 v' + base.latest + '。点「一键更新」它会自己下载并替换文件，你的配置和登录凭证都不会被动；也可以自己下 zip 手动导入。'),
+              (job.phase && job.phase !== 'idle') ? h('div', { style: { marginTop: '10px' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+                  h('div', { 'data-bd-upbar': '' }, h('i', { style: { width: (job.pct || 0) + '%', background: job.error ? 'var(--red-tx)' : (job.done ? 'var(--green-tx)' : undefined) } })),
+                  h('span', { 'data-bd-ds': '', style: { whiteSpace: 'nowrap', fontWeight: 600 } }, (job.pct || 0) + '%')),
+                h('div', { 'data-bd-ds': '', style: { marginTop: '6px', color: job.error ? 'var(--red-tx)' : (job.done ? 'var(--green-tx)' : 'var(--t2)') } },
+                  job.error ? ('✖ ' + job.msg) : (job.done ? ('✔ ' + job.msg) : job.msg))) : null,
+              h('div', { style: { marginTop: '10px', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' } },
+                h('button', { 'data-bd-btn': '', className: 'primary sm', disabled: jobRunning, onClick: applyUpdate }, jobRunning ? '更新中…' : ('⚡ 一键更新到 v' + base.latest)),
+                h('a', { 'data-bd-link': '', href: base.zipUrl, target: '_blank', rel: 'noopener' }, '手动下 zip ↗'),
                 h('a', { 'data-bd-link': '', href: base.homepage, target: '_blank', rel: 'noopener' }, '去 GitHub 看改动 ↗'))) : null,
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '更新源'), h('div', { 'data-bd-ds': '' }, '查不到就换一个；下面是刚才每个源的实测结果')),
