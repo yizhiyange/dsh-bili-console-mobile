@@ -673,16 +673,31 @@ window.__ModuleLoader__.load({
 
       // 主轮询：state 2s / rawlog 3s / report 5s（对齐 console 的节奏）
       React.useEffect(() => {
+        // 省电轮询：① 省电模式 / 安卓就把频率放慢 ② 页面切到后台（锁屏、切 App）直接不请求
+        // 这是手机上最费电的一块：原来不管你看不看，都雷打不动 2 秒打一次服务器（2026-11-1 改）
+        const lowPower = !!(state?.settings?.lowPower)
+        const isAndroid = /android/i.test(navigator.userAgent || '')
+        const every = (lowPower || isAndroid) ? 6000 : 2000
         const tick = async () => {
+          if (typeof document !== 'undefined' && document.hidden) return
           try { const s = await jget('/state'); if (alive.current && s.ok) { setState(s); setFails(0) } else if (alive.current) setFails((n) => n + 1) }
           catch { if (alive.current) setFails((n) => n + 1) }
         }
-        const tickLog = async () => { try { const l = await jget('/rawlog'); if (alive.current) setRawlog((l && l.lines) || []) } catch {} }
-        const tickRep = async () => { try { const r = await jget('/report'); if (alive.current) setReport(r) } catch {} }
+        const tickLog = async () => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          try { const l = await jget('/rawlog'); if (alive.current) setRawlog((l && l.lines) || []) } catch {}
+        }
+        const tickRep = async () => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          try { const r = await jget('/report'); if (alive.current) setReport(r) } catch {}
+        }
         tick(); tickLog(); tickRep()
-        const t1 = setInterval(tick, 2000), t2 = setInterval(tickLog, 3000), t3 = setInterval(tickRep, 5000)
-        return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3) }
-      }, [])
+        const t1 = setInterval(tick, every), t2 = setInterval(tickLog, (lowPower || isAndroid) ? 8000 : 3000), t3 = setInterval(tickRep, (lowPower || isAndroid) ? 15000 : 5000)
+        // 切回前台立刻补一次，不用等下一拍
+        const onVis = () => { if (!document.hidden) { tick(); tickLog(); tickRep() } }
+        try { document.addEventListener('visibilitychange', onVis) } catch {}
+        return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { document.removeEventListener('visibilitychange', onVis) } catch {} }
+      }, [!!(state?.settings?.lowPower)])
 
       const st = state
       const cfg = st?.settings || {}
@@ -2081,7 +2096,7 @@ window.__ModuleLoader__.load({
               Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
                 h('option', { value: '' }, '自动'),
                 (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
-            ToggleRow({ label: '省电模式', note: '界面轮询从 2 秒放慢到 6 秒；渲染降到 20fps、少占 CPU。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
+            ToggleRow({ label: '省电模式（针对手机）', note: '开了之后：①界面轮询从 2 秒放慢到 6 秒、手机在后台（锁屏/切 App）时完全不打请求；②私信监察间隔放宽到 3 倍；③渲染时限制 ffmpeg 单线程 + ultrafast，不再把 CPU 吃满（文件会大 10~20%，画质肉眼看不出）。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
           Card({ title: '素材库', sub: '图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断什么时候用' },
             ToggleRow({
               label: '启用素材库',
