@@ -2229,6 +2229,14 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '视频卡片数（画面张数）'), h('div', { 'data-bd-ds': '' }, '指视频里翻页的文字画面有几张（就是 PPT 页数），不是人格卡；人格卡在「人设」页配置，这里会自动沿用。越多视频越长；手机建议 4 张')),
               Stepper({ value: (cfg.videoMaxCards || 6) + ' 张', onStep: (d) => step('videoMaxCards', d, ' 张') })),
             h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '思考强度'),
+                h('div', { 'data-bd-ds': '' }, '模型自带的推理强度。关=最快最省（默认）；高强度更会"想"，适合写长文案，但慢很多、更费 token。写稿时传给模型的是 reasoning_effort，模型不认会自动退回普通模式')),
+              Select({ value: cfg.thinkLevel || 'off', onChange: (v) => saveOne('thinkLevel', v), minWidth: 130 },
+                h('option', { value: 'off' }, '关（最快）'),
+                h('option', { value: 'low' }, '低'),
+                h('option', { value: 'medium' }, '中'),
+                h('option', { value: 'high' }, '高（最费）'))),
+            h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '写稿用哪个模型'),
                 h('div', { 'data-bd-ds': '' }, (() => {
                   const eps = (st.chain && st.chain.endpoints) || []
@@ -2262,10 +2270,10 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: doFreeMemory }, '🧹 释放一下'),
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadMemInfo }, '刷新'))),
-          Card({ title: '素材库', sub: '图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断什么时候用' },
+          Card({ title: '素材库', sub: '图片当背景 / 音频当 BGM。备注可以不写（不写就不会被 AI 选用）；写一句「什么时候用」它才会主动挑' },
             ToggleRow({
               label: '启用素材库',
-              note: '开着时，AI 写稿时会看到素材备注，自己判断这条视频要不要用某个素材；没备注的素材一律不会被用',
+              note: '开着时，AI 写稿会看到素材备注，自己决定用不用；没备注的不会被选（导入时已自动用文件名填好）',
               on: !!cfg.useAssets, onChange: (v) => saveOne('useAssets', v),
             }),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
