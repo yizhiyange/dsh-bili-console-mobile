@@ -353,6 +353,20 @@ function trimLog(home) {
   } catch { /* 裁剪失败无所谓，下次再试 */ }
 }
 
+const SELF_ROOT = dirname(fileURLToPath(import.meta.url))
+
+/** 跑一个 Python 脚本并拿输出（超时 60 秒，不阻塞太久） */
+async function runPy(py, args, timeout = 60000) {
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  try {
+    const r = await promisify(execFile)(py, args, { timeout, windowsHide: true, maxBuffer: 4 * 1024 * 1024 })
+    return { ok: true, stdout: r.stdout, stderr: r.stderr }
+  } catch (e) {
+    return { ok: false, stdout: String((e && e.stdout) || ''), stderr: String((e && e.stderr) || (e && e.message) || '') }
+  }
+}
+
 function logLine(home, msg) {
   try {
     appendFileSync(join(home, 'duty.log'), `${new Date().toISOString()}  ${msg}\n`)
@@ -841,6 +855,33 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
+    // 本地识别音乐（纯音乐没有歌词，转写模型没用；这里靠声音本身的快慢/明暗打标签，零模型零联网）
+    if (req.method === 'POST' && path === '/assets/analyze-audio') {
+      try {
+        const c = loadConfig(home)
+        const dir = join(home, 'assets')
+        const py = resolvePython(c, home) || 'python3'
+        const script = join(SELF_ROOT, 'vendor', 'bilibili-mcp', 'analyze_audio.py')
+        const items = listAssets(home)
+        const out = []
+        let done = 0
+        for (const it of items) {
+          let note = it.note || ''
+          if (it.kind === 'audio' && !String(note).trim()) {
+            try {
+              const r = await runPy(py, [script, join(dir, it.file)])
+              const line = String((r.stdout || '').trim()).split('\n').pop()
+              if (r.ok && line && !/失败|不存在|读不出/.test(line)) { note = line.slice(0, 60); done++ }
+            } catch { /* 单条失败跳过 */ }
+          }
+          if (!note) note = it.hint || ''
+          out.push({ file: it.file, note, kind: it.kind })
+        }
+        saveAssets(home, out)
+        logLine(home, `本地识别音乐：处理 ${done} 个音频`)
+        return sendJson(res, 200, { ok: true, updated: done, items: listAssets(home) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 测一下识图模型能不能真看图（用一张 8x8 的小图问它是什么颜色/有什么）
     if (req.method === 'POST' && path === '/vision/test') {
       try {
