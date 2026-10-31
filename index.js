@@ -44,6 +44,7 @@ import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
+import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
 import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
@@ -595,6 +596,21 @@ export function apply(ctx, _config) {
     if (req.method === 'GET' && path === '/publish/genvideo/status') {
       return sendJson(res, 200, { ok: true, ...videoJobSnapshot() })
     }
+    // 内存状况（只读）：进程占多少、系统还剩多少、有没有 swap —— 手机上最关心这个
+    if (req.method === 'GET' && path === '/system/mem') {
+      const c = loadConfig(home)
+      return sendJson(res, 200, {
+        ok: true, rss: processRss(), mem: systemMem(), power: powerSaving(c),
+      })
+    }
+    // 手动释放内存（电脑上只有点这里才会动；手机上会自动定期走同样的逻辑）
+    if (req.method === 'POST' && path === '/system/free-memory') {
+      try {
+        const b = await readBody(req)
+        const r = freeMemory({ aggressive: !!(b && b.aggressive) })
+        return sendJson(res, 200, { ok: true, ...r })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 测一下「写稿用的模型」能不能真连通（省得填错了还一直生成失败）
     if (req.method === 'POST' && path === '/publish/test-model') {
       try {
@@ -1061,6 +1077,25 @@ export function apply(ctx, _config) {
   }
 
   // Phase 2：后台调度（全 try/catch + unref，绝不拖死插件）
+  //   🧹 手机专属：每 10 分钟自动清一次无用缓存（电脑上完全不建这个定时器，一个字节都不动）
+  try {
+    if (powerSaving(loadConfig(home)).saving) {
+      ctx.effect(() => {
+        const t = setInterval(() => {
+          try {
+            const before = processRss()
+            const r = freeMemory({ aggressive: false })
+            const kb = Math.round((before - (r.after || before)) / 1024)
+            if ((r.freed && (r.freed.flavorCache || r.freed.depCacheFailures)) || r.gc) {
+              logLine(home, `自动省内存：清了缓存${r.gc ? '并回收了垃圾' : ''}` + (kb > 0 ? `（约省 ${kb}KB）` : ''))
+            }
+          } catch { /* 清缓存失败无所谓 */ }
+        }, 10 * 60 * 1000)
+        try { t.unref?.() } catch {}
+        return () => { try { clearInterval(t) } catch {} }
+      }, 'bili-console: 手机省内存')
+    }
+  } catch (e) { log(`省内存定时器没起：${e?.message ?? e}`) }
   //   ctx.effect 要传"setup 函数"（其返回值才是销毁器）——否则 cordis 会把刚建的定时器当场清掉。
   //   ① 私信监察器：每分钟轮询一次（开着才干活）
   try {
