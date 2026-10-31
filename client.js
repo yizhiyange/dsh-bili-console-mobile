@@ -1331,7 +1331,8 @@ window.__ModuleLoader__.load({
                     h('div', { 'data-bd-ds': '' }, cloud.hasKey ? '已存过 key，留空就不改' : '还没填过')),
                   h(DraftInput, { value: '', type: 'password', onCommit: (v) => { if (v.trim()) saveOne('asrCloudKey', v.trim()) }, placeholder: cloud.hasKey ? '已存 key（留空不变）' : 'sk-…' })),
                 h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
-                  '云端按音频时长计费，通常几分钱一条；不想花这个钱就切回本地。'))
+                  '支持任何 OpenAI 兼容接口——硅基流动、OpenAI、你自建的都行，不是只能用它一家。',
+                  h('div', { style: { marginTop: '6px' } }, '省钱提示：硅基流动的 FunAudioLLM/SenseVoiceSmall 有免费用量（以官网为准），够日常听视频用。')))
               : h('div', null,
                 asr.ready ? null : h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '10px' } },
                   h('button', {
@@ -1466,6 +1467,14 @@ window.__ModuleLoader__.load({
                   onClick: recheckEnv,
                 }, envBusy ? '检测中…' : '重新检测'))),
             envJobView(['auto', 'deps', 'python']),
+            st.dshApi ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
+              h('div', { style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } },
+                h('div', null, 'DSH 给插件开放的接口（只读探测）：'),
+                Object.keys(st.dshApi).map((k) => {
+                  const v = st.dshApi[k]
+                  const text = !v ? '没有' : (Array.isArray(v) ? (v.length ? v.join('、') : '（空对象）') : String(v))
+                  return h('div', { key: k }, '· ' + k + '：' + text)
+                }))) : null,
             envDiag ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
               h('div', null, '平台 ' + (envDiag.platform || '?') + '　找到：' + (envDiag.found ? (envDiag.found.cmd + '（' + envDiag.found.ver + '）') : '没有任何可用的 Python')),
               (envDiag.tried || []).length ? h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7 } },
