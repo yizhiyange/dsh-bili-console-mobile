@@ -47,6 +47,8 @@ import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pye
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 插件自带对话（不走 DSH 会话，存自己的 chat.jsonl）
 import { loadChat, appendChat, clearChat, chatReply } from './lib/chat.mjs'
+// 把过程投进 DSH 会话（实验性，默认关）
+import { pushToDshSession, buildReportPrompt, listMethods } from './lib/dshsession.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
@@ -242,6 +244,8 @@ export function apply(ctx, _config) {
 
   // 转写能力探测：15 秒缓存，避免 /state 每 2 秒轮询都去起一个 python 子进程。
   // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
+  let hostCtx = null          // apply 时拿到的宿主上下文，用来调 agents 服务
+  let dshPush = { ok: null, at: 0, error: '', stage: '' }
   let dshApi = null
   let asrInfo = { ready: false, mode: 'local', reason: '还没检测' }
   let asrInfoAt = 0
@@ -282,6 +286,7 @@ export function apply(ctx, _config) {
       update: snapshot(VERSION || '0.0.0'),
       selfUpdate: selfUpdateSnapshot(),
       dshApi,
+      dshPush,
       envJob: envJobSnapshot(),
       haveYaml: true,
       safeMode, noAdapter: false,
@@ -344,6 +349,14 @@ export function apply(ctx, _config) {
       // 转写能力有 15 秒缓存，这里 await 一下（云端模式基本零开销）
       try { await refreshAsrInfo(loadConfig(home)) } catch {}
       return sendJson(res, 200, buildState())
+    }
+    // 试验：把一句话投进 DSH 会话（用来验证 agents 接口通不通）
+    if (req.method === 'POST' && path === '/dsh/push') {
+      const b = await readBody(req)
+      const text = String(b.text || '').trim() || buildReportPrompt(['（这是一次手动测试：插件正在验证能不能把消息写进 DSH 会话）'])
+      const r = await pushToDshSession(hostCtx, { home, text, cwd: home, sessionId: 'bili-console' })
+      dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }
+      return sendJson(res, 200, { ok: r.ok, ...r })
     }
     // ===== 插件自带对话（独立于 DSH 会话）=====
     if (req.method === 'GET' && path === '/chat') {
@@ -487,6 +500,18 @@ export function apply(ctx, _config) {
         try {
           await ensureVenv(cfg, home, (m) => logLine(home, m))
           const s = await runRound({ home, force, dryRun, shouldStop: () => stopRequested, hostModels: extractHostModels(), log: (m) => logLine(home, m) }); logLine(home, `手动轮次：${JSON.stringify(s)}`)
+            // 开了「发进 DSH 会话」就把这轮小结投过去（异步，不挡返回）
+            try {
+              if (loadConfig(home).dshSession) {
+                const lines = [
+                  '搜到 ' + (s.scanned || 0) + ' 条，挑中 ' + (s.picked || 0) + ' 条，' + (s.dryRun ? '试跑没发出去' : ('发了 ' + (s.posted || 0) + ' 条评论')),
+                  ...(s.items || []).filter((x) => x.grade === '值得看' || x.grade === '可以看').slice(0, 5).map((x) => '· ' + String(x.title || x.bvid).slice(0, 26) + ' —— ' + String(x.reason || '').slice(0, 30)),
+                ]
+                pushToDshSession(hostCtx, { home, text: buildReportPrompt(lines), cwd: home })
+                  .then((r) => { dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }; if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error) })
+                  .catch(() => {})
+              }
+            } catch { /* 投递失败不影响跑轮 */ }
         }
         catch (e) { logLine(home, `手动轮次异常：${e?.message || e}`) }
         finally { roundRunning = false }
@@ -702,6 +727,7 @@ export function apply(ctx, _config) {
         try { await handle(req, res) } catch (e) { sendJson(res, 500, { ok: false, error: e?.message ?? String(e) }) }
       },
     }), 'bili-console: /bili-console 页面路由')
+    hostCtx = ctx
     try { dshApi = probeDshApi(ctx) } catch {}
     log(`已挂载（家=${home}，v${VERSION}）`)
     // 版本号以 lib/version.mjs 为准；package.json 是给外面看的，两者若不一致会让人装错版本，这里提醒一句
