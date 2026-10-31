@@ -37,7 +37,7 @@ import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { asrStatus, asrReadiness, asrDiag } from './lib/asr.mjs'
 import { visionReady } from './lib/vision.mjs'
-import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment } from './lib/bili.mjs'
+import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
@@ -431,6 +431,84 @@ export function apply(ctx, _config) {
       const changed = saveConfig(home, { personaPrompt: String(patch.personaPrompt ?? '') })
       return sendJson(res, 200, { ok: true, changed })
     }
+
+    // ============ 发布能力（2026-10-31 新增：自己写的上层，不自动发、只在你点按钮时执行） ============
+    // 设计原则：
+    //   · 动态（/publish/dynamic）：纯手动——前端把你写好的文字传上来，插件照发，AI 不写、不改、不自动发。
+    //   · 视频（/publish/video）：点一下"启动"才投稿；视频文件路径、标题、分区、标签都由前端传。
+    //   · 每次发布都先校验登录态；失败返回明确 error，绝不静默吞掉。
+    //   · 用独立 client（用完即关），不复用值守 client，避免互相干扰。
+    const __publishPre = () => {
+      const cfg = loadConfig(home)
+      const login = loginStatus(home)
+      return { cfg, login }
+    }
+
+    // GET /publish/zones —— 查常用分区 ID（上传视频时选 tid 用）
+    if (req.method === 'GET' && path === '/publish/zones') {
+      try {
+        const { login } = __publishPre()
+        if (!login.loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B 站' })
+        syncCredToVendor(home)
+        const cli = newClient(loadConfig(home), home)
+        try { const r = await videoZones(cli); return sendJson(res, 200, { ok: true, zones: r }) }
+        finally { try { cli.close() } catch { /* noop */ } }
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+
+    // POST /publish/dynamic —— 手动发图文动态（你自己写文字，插件只负责发）
+    if (req.method === 'POST' && path === '/publish/dynamic') {
+      try {
+        const { login } = __publishPre()
+        if (!login.loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B 站' })
+        const b = await readBody(req)
+        const text = String(b.text || '').trim()
+        if (!text) return sendJson(res, 200, { ok: false, error: '动态内容不能为空（动态由你自己写，AI 不代写）' })
+        syncCredToVendor(home)
+        const cli = newClient(loadConfig(home), home)
+        try {
+          const r = await sendDynamic(cli, {
+            text,
+            images: Array.isArray(b.images) ? b.images : [],
+            topicId: Number(b.topicId) || 0,
+            scheduleTime: Number(b.scheduleTime) || 0,
+          })
+          logLine(home, r && r.success ? `已手动发动态：${text.slice(0, 30)}` : `发动态失败：${(r && r.error) || '未知'}`)
+          return sendJson(res, 200, { ok: Boolean(r && r.success), ...(r || {}) })
+        }
+        finally { try { cli.close() } catch { /* noop */ } }
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+
+    // POST /publish/video —— 手动投稿视频（点启动才发；视频路径/标题/分区/标签由前端给）
+    if (req.method === 'POST' && path === '/publish/video') {
+      try {
+        const { login } = __publishPre()
+        if (!login.loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B 站' })
+        const b = await readBody(req)
+        if (!String(b.videoPath || '').trim()) return sendJson(res, 200, { ok: false, error: '缺视频文件路径 videoPath' })
+        if (!String(b.title || '').trim()) return sendJson(res, 200, { ok: false, error: '缺视频标题 title' })
+        syncCredToVendor(home)
+        const cli = newClient(loadConfig(home), home)
+        try {
+          const r = await uploadVideo(cli, {
+            videoPath: b.videoPath,
+            title: b.title,
+            desc: b.desc || '',
+            tid: b.tid,
+            tags: b.tags || 'AI',
+            coverPath: b.coverPath || '',
+            source: b.source || '',
+            dynamicText: b.dynamicText || '',
+            noReprint: b.noReprint !== false,
+          })
+          logLine(home, r && r.success ? `已投稿视频：${String(b.title).slice(0, 30)}` : `投稿失败：${(r && r.error) || '未知'}`)
+          return sendJson(res, 200, { ok: Boolean(r && r.success), ...(r || {}) })
+        }
+        finally { try { cli.close() } catch { /* noop */ } }
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+
     // ---- Phase 2：登录 ----
     if (req.method === 'GET' && path === '/login/status') {
       return sendJson(res, 200, { ok: true, ...loginStatus(home) })
