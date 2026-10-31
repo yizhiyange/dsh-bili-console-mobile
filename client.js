@@ -492,9 +492,10 @@ window.__ModuleLoader__.load({
           }, o.label))))
     }
 
-    const Input = ({ value, onChange, placeholder, type, onBlur, style, defaultValue }) => {
+    const Input = ({ value, onChange, placeholder, type, onBlur, style, defaultValue, onEnter }) => {
       // 受控（有 onChange）走 value；非受控（只有 onBlur 提交）走 defaultValue，避开 2 秒轮询覆盖草稿
       const p = { type: type || 'text', placeholder: placeholder || '', onBlur }
+      if (onEnter) p.onKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); onEnter() } }
       if (onChange) { p.value = value ?? ''; p.onChange = (e) => onChange(e.target.value) }
       else { p.defaultValue = defaultValue ?? ''; p.key = defaultValue }
       return h('div', { 'data-bd-input': '', style }, h('input', p))
@@ -595,6 +596,9 @@ window.__ModuleLoader__.load({
         return this.props.children
       }
     }
+
+    // AI 助手的对话日志：放在组件外面，页面每 2 秒重渲染也不会被清掉
+    const BILI_CHAT_LOG = []
 
     /* ────────────── 主组件 ────────────── */
     function Console() {
@@ -762,6 +766,49 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** AI 助手：说一句话，它输出动作、插件白名单执行（能真的改设置） */
+      const renderChat = () => {
+        const box = document.querySelector('[data-bd-chat]')
+        if (!box) return
+        box.innerHTML = ''
+        for (const m of BILI_CHAT_LOG) {
+          const row = document.createElement('div')
+          const mine = m.role === 'me'
+          row.style.cssText = 'margin-top:6px;font-size:12.5px;line-height:1.7;padding:8px 10px;border-radius:8px;'
+            + (mine ? 'background:var(--blue-bg);color:var(--t1);margin-left:24px' : 'background:var(--surface);border:1px solid var(--line)')
+          row.textContent = m.text
+          box.appendChild(row)
+          if (m.actions && m.actions.length) {
+            const tip = document.createElement('div')
+            tip.style.cssText = 'font-size:11px;color:var(--t3);margin-top:4px;padding-left:2px'
+            tip.textContent = '执行结果：' + m.actions
+            box.appendChild(tip)
+          }
+        }
+        box.scrollTop = box.scrollHeight
+      }
+      const sendChat = async () => {
+        try {
+          const inp = document.querySelector('[data-bd-chatinput] input, [data-bd-chatinput]')
+          const raw = inp && ('value' in inp ? inp.value : inp.textContent) || ''
+          const text = String(raw || '').trim()
+          if (!text) return
+          BILI_CHAT_LOG.push({ role: 'me', text })
+          if (inp && 'value' in inp) inp.value = ''
+          renderChat()
+          BILI_CHAT_LOG.push({ role: 'ai', text: '…' })
+          renderChat()
+          const r = await jpost('/assistant/chat', { text })
+          BILI_CHAT_LOG.pop()
+          if (!r || !r.ok) {
+            BILI_CHAT_LOG.push({ role: 'ai', text: '出错了：' + ((r && r.error) || '未知') })
+          } else {
+            const lines = (r.results || []).map((x) => (x.ok ? ('✓ ' + (x.note || x.tool)) : ('✗ ' + (x.error || x.tool))))
+            BILI_CHAT_LOG.push({ role: 'ai', text: r.say, actions: lines.join('；') })
+          }
+          renderChat()
+        } catch (e) { toast_('发送失败：' + String(e?.message ?? e)) }
+      }
       /** 运行小结：插件自己记的账（不依赖 DSH 会话，2026-11-1） */
       const loadRuns = async () => {
         try {
@@ -801,6 +848,63 @@ window.__ModuleLoader__.load({
           loadRuns()
         } catch (e) { toast_('清空失败：' + String(e?.message ?? e)) }
       }
+      const renderAssetsInto = (items) => {
+        const box = document.querySelector('[data-bd-assets]')
+        if (!box) return
+        box.textContent = ''
+        if (!items || !items.length) {
+          box.textContent = '（还没有素材。点「打开素材文件夹」，把图片/音频丢进去，再点「刷新列表」）'
+          return
+        }
+        for (const it of items) {
+          const row = document.createElement('div')
+          row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px'
+          const name = document.createElement('span')
+          name.textContent = it.file + (it.kind === 'video' ? '（视频只归档，不剪进去）' : '')
+          name.style.cssText = 'font-size:12px;color:var(--t2);min-width:110px;max-width:150px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+          const inp = document.createElement('input')
+          inp.value = it.note || ''
+          inp.placeholder = it.hint ? ('可直接用文件名：' + it.hint + '（改了更好）') : '这个素材什么时候用？（AI 靠它判断）'
+          inp.dataset.file = it.file
+          inp.dataset.hint = it.hint || ''
+          inp.style.cssText = 'flex:1;min-width:100px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--t1);font-size:12px'
+          row.appendChild(name)
+          row.appendChild(inp)
+          box.appendChild(row)
+        }
+        const bar = document.createElement('div')
+        bar.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'
+        const fillAll = document.createElement('button')
+        fillAll.textContent = '⚡ 空的全按文件名填'
+        fillAll.setAttribute('data-bd-btn', '')
+        fillAll.className = 'ghost sm'
+        fillAll.title = '只填空着的，已经写过的不动'
+        fillAll.onclick = () => {
+          [...box.querySelectorAll('input[data-file]')].forEach((el) => {
+            if (!el.value.trim() && el.dataset.hint) el.value = el.dataset.hint
+          })
+          toast_('已按文件名填好，检查一下再点保存')
+        }
+        bar.appendChild(fillAll)
+        box.appendChild(bar)
+        const save = document.createElement('button')
+        save.textContent = '保存备注'
+        save.setAttribute('data-bd-btn', '')
+        save.className = 'primary sm'
+        save.style.marginTop = '8px'
+        save.onclick = async () => {
+          const items2 = [...box.querySelectorAll('input[data-file]')].map((el) => ({ file: el.dataset.file, note: el.value }))
+          try {
+            const r = await jpost('/assets', { items: items2 })
+            if (r && r.ok) { toast_('备注已保存'); renderAssetsInto(r.items || []) } else toast_('保存失败')
+          } catch (e) { toast_('保存失败：' + String(e?.message ?? e)) }
+        }
+        box.appendChild(save)
+      }
+      const loadAssets = async () => {
+        try { const r = await jget('/assets'); renderAssetsInto((r && r.items) || []) } catch { toast_('读素材列表失败') }
+      }
+
       /** 纯音乐本地识别：靠快慢/明暗给 BGM 打标签（不需要任何 AI 模型） */
       const analyzeAudioAssets = async () => {
         try {
@@ -1618,6 +1722,12 @@ window.__ModuleLoader__.load({
                   'data-bd-btn': '', className: 'outline sm', onClick: resetQuota,
                   title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
                 }, '重置今日额度')))),
+          Card({ title: 'AI 助手', sub: '直接用大白话说，它帮你改设置（"思考强度都调到低""把额度清零"）' },
+            h('div', { 'data-bd-chat': '', style: { maxHeight: '260px', overflowY: 'auto', padding: '4px 0' } },
+              h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '试试：「把每日上限改成 5」「思考强度全部调低」「看看我现在设置」「把今天额度清零」')),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' } },
+              Input({ 'data-bd-chatinput': '', placeholder: '跟它说你想改什么…', onEnter: () => sendChat() }),
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: sendChat }, '发送'))),
           Card({ title: '运行小结', sub: '插件自己记的时间线（不依赖 DSH 会话，跑几轮都不会丢）' },
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadRuns }, '刷新'),
@@ -2335,62 +2445,6 @@ window.__ModuleLoader__.load({
           } catch (e) { toast_('启动失败：' + String(e?.message ?? e)) }
         }
         /** 把素材列表画进 DOM（不用 React state：这些组件是直接调用式，加 hooks 会崩） */
-        const renderAssetsInto = (items) => {
-          const box = document.querySelector('[data-bd-assets]')
-          if (!box) return
-          box.textContent = ''
-          if (!items || !items.length) {
-            box.textContent = '（还没有素材。点「打开素材文件夹」，把图片/音频丢进去，再点「刷新列表」）'
-            return
-          }
-          for (const it of items) {
-            const row = document.createElement('div')
-            row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px'
-            const name = document.createElement('span')
-            name.textContent = it.file + (it.kind === 'video' ? '（视频只归档，不剪进去）' : '')
-            name.style.cssText = 'font-size:12px;color:var(--t2);min-width:110px;max-width:150px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
-            const inp = document.createElement('input')
-            inp.value = it.note || ''
-            inp.placeholder = it.hint ? ('可直接用文件名：' + it.hint + '（改了更好）') : '这个素材什么时候用？（AI 靠它判断）'
-            inp.dataset.file = it.file
-            inp.dataset.hint = it.hint || ''
-            inp.style.cssText = 'flex:1;min-width:100px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--t1);font-size:12px'
-            row.appendChild(name)
-            row.appendChild(inp)
-            box.appendChild(row)
-          }
-          const bar = document.createElement('div')
-          bar.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'
-          const fillAll = document.createElement('button')
-          fillAll.textContent = '⚡ 空的全按文件名填'
-          fillAll.setAttribute('data-bd-btn', '')
-          fillAll.className = 'ghost sm'
-          fillAll.title = '只填空着的，已经写过的不动'
-          fillAll.onclick = () => {
-            [...box.querySelectorAll('input[data-file]')].forEach((el) => {
-              if (!el.value.trim() && el.dataset.hint) el.value = el.dataset.hint
-            })
-            toast_('已按文件名填好，检查一下再点保存')
-          }
-          bar.appendChild(fillAll)
-          box.appendChild(bar)
-          const save = document.createElement('button')
-          save.textContent = '保存备注'
-          save.setAttribute('data-bd-btn', '')
-          save.className = 'primary sm'
-          save.style.marginTop = '8px'
-          save.onclick = async () => {
-            const items2 = [...box.querySelectorAll('input[data-file]')].map((el) => ({ file: el.dataset.file, note: el.value }))
-            try {
-              const r = await jpost('/assets', { items: items2 })
-              if (r && r.ok) { toast_('备注已保存'); renderAssetsInto(r.items || []) } else toast_('保存失败')
-            } catch (e) { toast_('保存失败：' + String(e?.message ?? e)) }
-          }
-          box.appendChild(save)
-        }
-        const loadAssets = async () => {
-          try { const r = await jget('/assets'); renderAssetsInto((r && r.items) || []) } catch { toast_('读素材列表失败') }
-        }
         const openAssets = async () => {
           try { const r = await jpost('/assets/reveal', {}); if (r && r.dir) toast_('已打开：' + r.dir) } catch { toast_('打不开素材文件夹') }
         }
