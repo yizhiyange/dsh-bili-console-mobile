@@ -1631,7 +1631,9 @@ window.__ModuleLoader__.load({
         /* 运行环境 */
         {
           const v = st.venv || {}
-          const ready = Boolean(st.venvReady)
+          // 就绪判定：venv 就绪 或 系统里已有"带依赖的解释器"（baseWithDeps）都算。
+          // 之前只看 venvReady，"系统 Python 直接能用"这种情况会被误标成「待安装」（2026-10-31 修）
+          const ready = Boolean(st.venvReady || v.baseWithDeps)
           const where = v.venvReady ? v.venvPath : (v.baseWithDeps || '')
           // 分四种情况说人话：就绪 / venv在但依赖缺 / 有Python待装依赖 / 真没找到
           const desc = ready
