@@ -702,6 +702,93 @@ window.__ModuleLoader__.load({
         return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { document.removeEventListener('visibilitychange', onVis) } catch {} }
       }, [!!(state?.settings?.lowPower)])
 
+      /** 内存状况 + 手动释放（运行内存，不是磁盘空间） */
+      const loadMemInfo = async () => {
+        try {
+          const box = document.querySelector('[data-bd-meminfo]')
+          if (!box) return
+          const r = await jget('/system/mem')
+          const mb = (b) => (Math.round((Number(b) || 0) / 1048576 * 10) / 10) + 'MB'
+          const m = r && r.mem
+          const p = (r && r.power) || {}
+          let html = '插件进程现在占：' + mb(r && r.rss)
+          if (m) {
+            html += '<br>手机可用内存：' + mb(m.available) + ' / 共 ' + mb(m.total)
+            if (m.swapTotal > 0) html += '<br>系统已在用交换内存：' + mb(m.swapTotal - m.swapFree) + ' / ' + mb(m.swapTotal) + '（不用我们再弄）'
+            else html += '<br>当前没有用交换内存（手机上正常，安卓一般用 zram 压缩代替）'
+          } else {
+            html += '<br>电脑：只显示进程占用'
+          }
+          box.innerHTML = html
+        } catch { /* 读不到就算了 */ }
+      }
+      const doFreeMemory = async () => {
+        try {
+          const r = await jpost('/system/free-memory', { aggressive: true })
+          toast_(r && r.ok ? '已释放（能清的都清了）' : ('释放失败：' + ((r && r.error) || '')))
+          loadMemInfo()
+        } catch (e) { toast_('释放失败：' + String(e?.message ?? e)) }
+      }
+      /** 自定义模型的草稿：手机上输入框失去焦点经常不触发，所以先记草稿，点「保存」才落盘 */
+      const draftUpd = (k, v) => { videoCustDraft.current[k] = String(v || '').trim() }
+      const setCMsg = (t) => { const el = document.querySelector('[data-bd-cmsg]'); if (el) el.textContent = t }
+      const saveCustomModel = async () => {
+        try {
+          const d = videoCustDraft.current
+          if (!Object.keys(d).length) return setCMsg('你还没改任何东西')
+          setCMsg('保存中…')
+          const r = await jpost('/settings', d)
+          if (!r || !r.ok) return setCMsg('保存失败：' + ((r && r.error) || ''))
+          videoCustDraft.current = {}
+          setCMsg('✓ 已保存（' + Object.keys(d).length + ' 项）')
+          toast_('自定义模型已保存')
+        } catch (e) { setCMsg('保存失败：' + String(e?.message ?? e)) }
+      }
+      /** 测一下这个自定义模型能不能真跑：让模型写一张卡片试试 */
+      const testCustomModel = async () => {
+        try {
+          setCMsg('正在连接…')
+          const d = videoCustDraft.current
+          const patch = {}
+          for (const k of ['videoCustomBaseUrl', 'videoCustomModel', 'videoCustomKey', 'videoCustomName']) if (d[k] !== undefined) patch[k] = d[k]
+          if (Object.keys(patch).length) await jpost('/settings', patch)
+          const r = await jpost('/publish/test-model', {})
+          if (!r || !r.ok) return setCMsg('✗ ' + ((r && r.error) || '连不上'))
+          setCMsg('✓ 连上了：' + String((r && r.reply) || '').slice(0, 40))
+        } catch (e) { setCMsg('✗ ' + String(e?.message ?? e)) }
+      }
+      /** 直接在插件页面里看生成的视频（不用等 B 站） */
+      const loadVideoList = async () => {
+        try {
+          const r = await jget('/publish/video-list')
+          const box = document.querySelector('[data-bd-vidlist]')
+          if (!box) return
+          const files = (r && r.files) || []
+          if (!files.length) { box.innerHTML = ''; return }
+          box.innerHTML = ''
+          for (const f of files) {
+            const wrap = document.createElement('div')
+            wrap.style.cssText = 'margin:10px 0;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--gray-bg)'
+            const title = document.createElement('div')
+            title.style.cssText = 'font-size:12px;color:var(--t2);margin-bottom:6px;word-break:break-all'
+            title.textContent = f.name + '（' + Math.round((f.size || 0) / 1024) + 'KB）'
+            const v = document.createElement('video')
+            v.controls = true; v.playsInline = true; v.preload = 'metadata'
+            v.style.cssText = 'width:100%;max-height:240px;border-radius:6px;background:#000'
+            v.src = API + '/publish/video-file?n=' + encodeURIComponent(f.name)
+            wrap.appendChild(title); wrap.appendChild(v)
+            box.appendChild(wrap)
+          }
+        } catch { /* 列表拿不到就算了 */ }
+      }
+      // 切到「发布」页时，把已生成的视频和内存状况拉一次。
+      // ⚠️ 必须放在这个位置：下面有 `if (!st) return` 的提前返回，
+      //    hook 放在它后面就会「首次渲染跳过、数据回来才调用」→ hook 数量变化 → 整个面板崩成空白（2026-11-1 血案）
+      React.useEffect(() => {
+        if (page !== 'publish') return
+        try { loadVideoList(); loadMemInfo() } catch { /* 页面还没挂上就算了 */ }
+      }, [page])
+
       const st = state
       const cfg = st?.settings || {}
 
@@ -1879,91 +1966,6 @@ window.__ModuleLoader__.load({
        * DSH 设置面板里根本找不到，用户以为功能丢了。这里补上同样的入口。
        * 注意：表单全部用非受控输入（点按钮时读 DOM），不在这里加 useState —— 见 Select 上方注释。
        */
-      /** 内存状况 + 手动释放（运行内存，不是磁盘空间） */
-      const loadMemInfo = async () => {
-        try {
-          const box = document.querySelector('[data-bd-meminfo]')
-          if (!box) return
-          const r = await jget('/system/mem')
-          const mb = (b) => (Math.round((Number(b) || 0) / 1048576 * 10) / 10) + 'MB'
-          const m = r && r.mem
-          const p = (r && r.power) || {}
-          let html = '插件进程现在占：' + mb(r && r.rss)
-          if (m) {
-            html += '<br>手机可用内存：' + mb(m.available) + ' / 共 ' + mb(m.total)
-            if (m.swapTotal > 0) html += '<br>系统已在用交换内存：' + mb(m.swapTotal - m.swapFree) + ' / ' + mb(m.swapTotal) + '（不用我们再弄）'
-            else html += '<br>当前没有用交换内存（手机上正常，安卓一般用 zram 压缩代替）'
-          } else {
-            html += '<br>电脑：只显示进程占用'
-          }
-          box.innerHTML = html
-        } catch { /* 读不到就算了 */ }
-      }
-      const doFreeMemory = async () => {
-        try {
-          const r = await jpost('/system/free-memory', { aggressive: true })
-          toast_(r && r.ok ? '已释放（能清的都清了）' : ('释放失败：' + ((r && r.error) || '')))
-          loadMemInfo()
-        } catch (e) { toast_('释放失败：' + String(e?.message ?? e)) }
-      }
-      /** 自定义模型的草稿：手机上输入框失去焦点经常不触发，所以先记草稿，点「保存」才落盘 */
-      const draftUpd = (k, v) => { videoCustDraft.current[k] = String(v || '').trim() }
-      const setCMsg = (t) => { const el = document.querySelector('[data-bd-cmsg]'); if (el) el.textContent = t }
-      const saveCustomModel = async () => {
-        try {
-          const d = videoCustDraft.current
-          if (!Object.keys(d).length) return setCMsg('你还没改任何东西')
-          setCMsg('保存中…')
-          const r = await jpost('/settings', d)
-          if (!r || !r.ok) return setCMsg('保存失败：' + ((r && r.error) || ''))
-          videoCustDraft.current = {}
-          setCMsg('✓ 已保存（' + Object.keys(d).length + ' 项）')
-          toast_('自定义模型已保存')
-        } catch (e) { setCMsg('保存失败：' + String(e?.message ?? e)) }
-      }
-      /** 测一下这个自定义模型能不能真跑：让模型写一张卡片试试 */
-      const testCustomModel = async () => {
-        try {
-          setCMsg('正在连接…')
-          const d = videoCustDraft.current
-          const patch = {}
-          for (const k of ['videoCustomBaseUrl', 'videoCustomModel', 'videoCustomKey', 'videoCustomName']) if (d[k] !== undefined) patch[k] = d[k]
-          if (Object.keys(patch).length) await jpost('/settings', patch)
-          const r = await jpost('/publish/test-model', {})
-          if (!r || !r.ok) return setCMsg('✗ ' + ((r && r.error) || '连不上'))
-          setCMsg('✓ 连上了：' + String((r && r.reply) || '').slice(0, 40))
-        } catch (e) { setCMsg('✗ ' + String(e?.message ?? e)) }
-      }
-      /** 直接在插件页面里看生成的视频（不用等 B 站） */
-      const loadVideoList = async () => {
-        try {
-          const r = await jget('/publish/video-list')
-          const box = document.querySelector('[data-bd-vidlist]')
-          if (!box) return
-          const files = (r && r.files) || []
-          if (!files.length) { box.innerHTML = ''; return }
-          box.innerHTML = ''
-          for (const f of files) {
-            const wrap = document.createElement('div')
-            wrap.style.cssText = 'margin:10px 0;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--gray-bg)'
-            const title = document.createElement('div')
-            title.style.cssText = 'font-size:12px;color:var(--t2);margin-bottom:6px;word-break:break-all'
-            title.textContent = f.name + '（' + Math.round((f.size || 0) / 1024) + 'KB）'
-            const v = document.createElement('video')
-            v.controls = true; v.playsInline = true; v.preload = 'metadata'
-            v.style.cssText = 'width:100%;max-height:240px;border-radius:6px;background:#000'
-            v.src = API + '/publish/video-file?n=' + encodeURIComponent(f.name)
-            wrap.appendChild(title); wrap.appendChild(v)
-            box.appendChild(wrap)
-          }
-        } catch { /* 列表拿不到就算了 */ }
-      }
-      // 切到「发布」页时，把已生成的视频和内存状况拉一次（顶层 effect，别放进页面函数）
-      React.useEffect(() => {
-        if (page !== 'publish') return
-        try { loadVideoList(); loadMemInfo() } catch { /* 页面还没挂上就算了 */ }
-      }, [page])
-
       const renderPublish = () => {
         const readVal = (sel) => {
           try { const el = document.querySelector(sel); return el ? String(el.value || '').trim() : '' } catch { return '' }
