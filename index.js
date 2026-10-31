@@ -46,7 +46,7 @@ import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clear
 import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
 import { chat } from './lib/llm.mjs'
 import { describeImage, visionReady } from './lib/vision.mjs'
-import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts } from './lib/videogen.mjs'
+import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -86,6 +86,9 @@ export const Config = !z ? undefined : z.object({
   videoVoice: z.boolean().default(true).extra('volatile', true),
   chainStrength: z.any().default({}).extra('volatile', true),
   thinkLevel: z.string().default('off').extra('volatile', true),
+  videoLayout: z.string().default('auto').extra('volatile', true),
+  videoTtsEngine: z.string().default('edge').extra('volatile', true),
+  videoTtsUrl: z.string().default('').extra('volatile', true),
   videoVoiceName: z.string().default('zh-CN-XiaoxiaoNeural').extra('volatile', true),
   videoVoiceRate: z.string().default('+0%').extra('volatile', true),
   videoVoicePitch: z.string().default('+0Hz').extra('volatile', true),
@@ -769,6 +772,20 @@ export function apply(ctx, _config) {
         logLine(home, `从手机目录导入素材 ${n} 个（${ext}）`)
         return sendJson(res, 200, { ok: true, copied: n, from: ext })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
+    if (req.method === 'GET' && path === '/video/preview') {
+      try {
+        const style = String(new URL(req.url, 'http://x').searchParams.get('style') || '')
+        const c = loadConfig(home)
+        const png = await renderPreviewPng({ home, cfg: c, style })
+        if (!png || !existsSync(png)) { res.writeHead(500); return res.end('预览生成失败') }
+        const buf = readFileSync(png)
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'Content-Length': buf.length })
+        res.end(buf)
+        try { rmSync(png, { force: true }) } catch { /* 用完就删，别攒垃圾 */ }
+        return
+      } catch (e) { res.writeHead(500); return res.end('err') }
     }
     // 列出已生成的视频（让用户在插件页面里直接放着看，不用先发到 B 站）
     if (req.method === 'GET' && path === '/publish/video-list') {
