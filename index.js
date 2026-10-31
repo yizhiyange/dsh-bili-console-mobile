@@ -45,6 +45,8 @@ import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pyenv.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
+// 插件自带对话（不走 DSH 会话，存自己的 chat.jsonl）
+import { loadChat, appendChat, clearChat, chatReply } from './lib/chat.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
@@ -342,6 +344,24 @@ export function apply(ctx, _config) {
       // 转写能力有 15 秒缓存，这里 await 一下（云端模式基本零开销）
       try { await refreshAsrInfo(loadConfig(home)) } catch {}
       return sendJson(res, 200, buildState())
+    }
+    // ===== 插件自带对话（独立于 DSH 会话）=====
+    if (req.method === 'GET' && path === '/chat') {
+      return sendJson(res, 200, { ok: true, messages: loadChat(home, 200) })
+    }
+    if (req.method === 'POST' && path === '/chat/send') {
+      const b = await readBody(req)
+      const text = String(b.text || '').trim().slice(0, 2000)
+      if (!text) return sendJson(res, 200, { ok: false, error: '说点什么再发' })
+      appendChat(home, { role: 'me', kind: 'sys', text })
+      const cfgC = loadConfig(home)
+      const r = await chatReply(cfgC, extractHostModels(), text, home)
+      if (r.ok) appendChat(home, { role: 'bot', kind: 'reply', text: r.text, model: r.modelUsed || '' })
+      return sendJson(res, 200, r)
+    }
+    if (req.method === 'POST' && path === '/chat/clear') {
+      clearChat(home)
+      return sendJson(res, 200, { ok: true })
     }
     // ===== 版本自检 =====
     // GET  /update/state  —— 拿当前版本 + 上次检查结果 + 可用加速源（不联网，秒回）
