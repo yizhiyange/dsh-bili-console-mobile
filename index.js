@@ -841,11 +841,35 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
+    // 测一下识图模型能不能真看图（用一张 8x8 的小图问它是什么颜色/有什么）
+    if (req.method === 'POST' && path === '/vision/test') {
+      try {
+        const c = loadConfig(home)
+        const v = c.visionModel || {}
+        const miss = []
+        if (!v.apiUrl) miss.push('接口地址')
+        if (!v.modelName) miss.push('模型名')
+        if (!v.apiKey) miss.push('API Key')
+        if (miss.length) return sendJson(res, 200, { ok: false, error: '还缺：' + miss.join('、') })
+        // 现造一张 64x64 红色方块
+        const redPng = 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFElEQVR42mP8z8Dwn4GBgYGJAQoAHgQCAZ7sB3kAAAAASUVORK5CYII='
+        const d = await describeImage(c, 'data:image/png;base64,' + redPng, '这张图是什么颜色？只回一个词。')
+        if (!d.ok) return sendJson(res, 200, { ok: false, error: d.error || '调用失败' })
+        return sendJson(res, 200, { ok: true, reply: String(d.text || '').trim().slice(0, 40), model: v.modelName })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 让 AI 看素材图，自动写「什么时候用」的备注（懒人救星，2026-11-1）
     if (req.method === 'POST' && path === '/assets/auto-note') {
       try {
         const c = loadConfig(home)
-        if (!visionReady(c)) return sendJson(res, 200, { ok: false, error: '还没配识图模型：去「模型与密钥 → 识图模型」填一个，才能让 AI 看图写备注' })
+        if (!visionReady(c)) {
+          const vm = (c.visionModel || {})
+          const miss = []
+          if (!vm.apiUrl) miss.push('接口地址')
+          if (!vm.modelName) miss.push('模型名')
+          if (!vm.apiKey) miss.push('API Key')
+          return sendJson(res, 200, { ok: false, error: '识图模型还没配全，缺：' + (miss.join('、') || '未知') + '。在素材库下面「识图模型」里填好就行' })
+        }
         const dir = join(home, 'assets')
         const items = listAssets(home)
         const out = []
