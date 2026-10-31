@@ -824,21 +824,18 @@ window.__ModuleLoader__.load({
       const openVideo = async (bvid) => {
         const web = 'https://www.bilibili.com/video/' + bvid
         try {
-          const r = await jpost('/open', { what: 'url', u: web })
-          if (r && r.platform === 'win32') { toast_('已在系统浏览器打开视频'); return }
-          const isAndroid = /android/i.test(navigator.userAgent || '')
-          if (!isAndroid) { toast_('已请系统打开视频'); return }
-          if (r && r.launched) { toast_('已用浏览器打开视频'); return }
-          // 手机：先试 B站 App 的 deep link（scheme=bilibili），带网页兜底；1.4 秒没切走再走网页 intent
-          try {
-            const a = document.createElement('a')
-            a.href = 'intent://video/' + bvid + '#Intent;scheme=bilibili;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=' + encodeURIComponent(web) + ';end'
-            a.target = '_blank'; a.rel = 'noopener'
-            a.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden'
-            document.body.appendChild(a); a.click(); setTimeout(() => { try { a.remove() } catch {} }, 1000)
-          } catch { /* noop */ }
-          if (await waitedForLeave(1400)) { toast_('已用哔哩哔哩打开'); return }
-          if (launchMobileIntent(web) && await waitedForLeave(1400)) { toast_('已用浏览器打开视频'); return }
+          // ① 手机上先让后端用「深链 + 显式包名」唤起 B站 App —— 不经过系统"用哪个应用打开"
+          //    选择器，避免用户顺手把 B站 设成默认浏览器（之后所有网页都被 B站 接管，又卡又丑）
+          const app = await jpost('/open', { what: 'biliapp', bvid })
+          if (app && app.launched) { toast_('已用哔哩哔哩打开'); return }
+          // ② 电脑：系统浏览器开网页版
+          if (app && app.platform === 'win32') {
+            const r = await jpost('/open', { what: 'url', u: web })
+            toast_(r && r.launched ? '已在系统浏览器打开视频' : '已把网址交给系统')
+            return
+          }
+          // ③ 手机上没装 B站 App（或深链失败）→ 不再把 https 丢给系统（那正是弹选择器的原因），
+          //    直接在插件面板里把网页地址摆出来，想开就点
           setWebUrl(web); setWebOpen(true)
         } catch { toast_('打不开，手动访问 bilibili.com/video/' + bvid) }
       }
