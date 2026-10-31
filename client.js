@@ -233,14 +233,6 @@ window.__ModuleLoader__.load({
     .narrow [data-bd-floatsave]{right:10px;bottom:96px;gap:8px;padding:7px 10px;}
     /* 浮动保存条出现时，给内容底部留出空间，避免盖住最后几行设置 */
     [data-bd-page].has-floatsave [data-bd-content]{padding-bottom:80px;}
-    /* 对话页气泡 */
-    [data-bd-chatlog]{max-height:54vh;overflow:auto;padding:2px 2px 6px;}
-    [data-bd-bubble]{max-width:86%;margin:8px 0;padding:9px 12px;border-radius:12px;background:var(--gray-bg);color:var(--t1);font-size:13px;line-height:1.75;}
-    [data-bd-bubble] .txt{white-space:pre-wrap;}
-    [data-bd-bubble] .meta{font-size:11px;opacity:.6;margin-top:4px;}
-    [data-bd-bubble].me{margin-left:auto;background:var(--blue);color:#fff;}
-    [data-bd-bubble].round{background:var(--amber-bg);font-size:12.5px;}
-    .narrow [data-bd-chatlog]{max-height:42vh;}
     [data-bd-foot]{text-align:center;font-size:11px;color:var(--t3);padding:4px 0 10px;line-height:1.8;}
 
     [data-bd-mask]{position:fixed;inset:0;background:rgba(17,17,17,.45);display:none;align-items:center;justify-content:center;z-index:50;}
@@ -540,9 +532,6 @@ window.__ModuleLoader__.load({
       // 环境自检结果 / 进行中
       const [envDiag, setEnvDiag] = React.useState(null)
       const [envBusy, setEnvBusy] = React.useState(false)
-      const [chatMsgs, setChatMsgs] = React.useState(null)
-      const [chatText, setChatText] = React.useState('')
-      const [chatBusy, setChatBusy] = React.useState(false)
       const [asrCheck, setAsrCheck] = React.useState(null)
       const [dshTesting, setDshTesting] = React.useState(false)
       const [asrChecking, setAsrChecking] = React.useState(false)
@@ -851,30 +840,6 @@ window.__ModuleLoader__.load({
           else toast_('没成功（' + ((r && r.stage) || '') + '）：' + ((r && r.error) || '未知'))
         } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } finally { setDshTesting(false) }
       }
-      /** 对话页：拉历史 / 发一句 / 清空 */
-      const loadChatMsgs = async () => {
-        try { const r = await jget('/chat'); setChatMsgs((r && r.messages) || []) } catch { setChatMsgs([]) }
-      }
-      const sendChat = async () => {
-        const t = String(chatText || '').trim()
-        if (!t || chatBusy) return
-        setChatBusy(true)
-        setChatText('')
-        // 先把"我"这条乐观插进去，别等接口（手机上等一圈很难受）
-        setChatMsgs((m) => (m || []).concat([{ role: 'me', kind: 'sys', text: t, at: new Date().toISOString() }]))
-        try {
-          const r = await jpost('/chat/send', { text: t })
-          if (r && r.ok && r.text) setChatMsgs((m) => (m || []).concat([{ role: 'bot', kind: 'reply', text: r.text, at: new Date().toISOString() }]))
-          else toast_('没回上来：' + ((r && r.error) || '未知'))
-        } catch (e) { toast_('发送失败：' + String(e?.message ?? e)) } finally { setChatBusy(false) }
-      }
-      const clearChatAll = async () => {
-        try { await jpost('/chat/clear', {}); setChatMsgs([]); toast_('对话已清空') } catch (e) { toast_('清空失败：' + String(e?.message ?? e)) }
-      }
-      React.useEffect(() => {
-        if (page === 'chat' && chatMsgs === null) loadChatMsgs()
-      }, [page, chatMsgs])
-
       /** 转写自检：真 import 一次，把版本号亮出来 */
       const checkAsr = async () => {
         setAsrChecking(true)
@@ -1018,7 +983,7 @@ window.__ModuleLoader__.load({
       else if (st.safeMode) banner = h('div', { 'data-bd-banner': '' }, '安全模式：当前不会自动发评论、不会发私信。想真发时，到「设置」把「自动评论并 @」和「投递方式」打开。')
 
       /* ── 侧边导航 ── */
-      const PAGES = [['overview', '总览'], ['chat', '对话'], ['models', '模型与密钥'], ['logs', '专业日志'], ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'], ['settings', '设置']]
+      const PAGES = [['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'], ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'], ['settings', '设置']]
       const sidebar = h('aside', { 'data-bd-sidebar': '' },
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
@@ -1026,38 +991,6 @@ window.__ModuleLoader__.load({
         h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
-      const renderChat = () => {
-        const msgs = chatMsgs || []
-        const fmt = (iso) => {
-          try { const d = new Date(iso); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') } catch { return '' }
-        }
-        return h('div', { 'data-bd-pagewrap': '' },
-          h('div', { 'data-bd-pagetitle': '' },
-            h('span', { className: 't' }, '对话'),
-            h('span', { className: 's' }, '插件自己的对话页（不写进 DSH 会话，存在插件目录里）')),
-          Card({
-            title: '和它聊聊',
-            sub: '每轮跑完会在这里留一条小结；你也可以直接说话',
-            right: h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: clearChatAll }, '清空'),
-          },
-            h('div', { 'data-bd-chatlog': '' },
-              msgs.length ? msgs.map((m, i) => h('div', {
-                key: i, 'data-bd-bubble': '', className: (m.role === 'me' ? 'me' : 'bot') + (m.kind === 'round' ? ' round' : ''),
-              },
-                h('div', { className: 'txt' }, String(m.text || '')),
-                h('div', { className: 'meta' }, (m.role === 'me' ? '你' : (m.kind === 'round' ? '值班小结' : '它')) + ' · ' + fmt(m.at)))) : h('div', { 'data-bd-empty': '' }, '还没有对话。下面说一句试试，或者先去跑一轮。'),
-              chatBusy ? h('div', { 'data-bd-bubble': '', className: 'bot' }, h('div', { className: 'txt' }, '正在想…')) : null),
-            h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' } },
-              h('div', { 'data-bd-input': '', style: { flex: 1 } }, h('input', {
-                placeholder: '说点什么…（回车发送）', value: chatText,
-                onChange: (e) => setChatText(e.target.value),
-                onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); sendChat() } },
-              })),
-              h('button', { 'data-bd-btn': '', className: 'primary sm', disabled: chatBusy || !String(chatText || '').trim(), onClick: sendChat }, chatBusy ? '发送中' : '发送')),
-            h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } },
-              '用的是你在「降级链 / 模型与密钥」里配的模型，按人设说话。它只会聊天，不会替你改设置、也不会发评论。')))
-      }
-
       const renderOverview = () => {
         const ep = (st.chain && st.chain.endpoints) || []
         const on = []; if (cfg.autoComment) on.push('自动评论'); if (cfg.dmMode && cfg.dmMode !== 'off') on.push('私信投递'); if (cfg.dmWatch) on.push('私信监察')
@@ -1721,7 +1654,7 @@ window.__ModuleLoader__.load({
         return h('div', { 'data-bd-pagewrap': '' }, blocks)
       }
 
-      const PAGERENDER = { overview: renderOverview, chat: renderChat, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, settings: renderSettings }
+      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, settings: renderSettings }
       const content = h(PageBoundary, { onHome: () => setPage('overview') }, h('div', { 'data-bd-content': '' }, (PAGERENDER[page] || renderOverview)()))
 
       const modal = h('div', { 'data-bd-mask': '', className: login.open ? 'show' : undefined },
