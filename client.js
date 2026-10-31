@@ -762,6 +762,45 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 运行小结：插件自己记的账（不依赖 DSH 会话，2026-11-1） */
+      const loadRuns = async () => {
+        try {
+          const box = document.querySelector('[data-bd-runs]')
+          if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">读取中…</div>'
+          const r = await jget('/runs?limit=20')
+          if (!box) return
+          const rows = (r && r.runs) || []
+          if (!rows.length) { box.innerHTML = '<div style="font-size:12px;color:var(--t3)">还没有记录。跑一轮之后这里会有一条。</div>'; return }
+          const fmt = (t) => { try { const d = new Date(t); return d.getMonth() + 1 + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') } catch { return '—' } }
+          box.innerHTML = ''
+          for (const it of rows) {
+            const div = document.createElement('div')
+            div.style.cssText = 'padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:var(--surface)'
+            const head = document.createElement('div')
+            head.style.cssText = 'font-size:12px;color:var(--t2);display:flex;gap:8px;flex-wrap:wrap;align-items:center'
+            const tag = it.dryRun ? '试跑' : (it.posted > 0 ? ('发 ' + it.posted + ' 条') : '没发')
+            head.innerHTML = '<b style="color:var(--t1)">' + fmt(it.at) + '</b><span>' + tag + '</span><span>挑中 ' + (it.picked || 0) + '</span>'
+              + (it.why ? ('<span style="color:var(--t3)">' + String(it.why).slice(0, 40) + '</span>') : '')
+            div.appendChild(head)
+            if (it.items && it.items.length) {
+              const ul = document.createElement('div')
+              ul.style.cssText = 'font-size:11.5px;color:var(--t3);margin-top:4px;line-height:1.7'
+              ul.textContent = it.items.slice(0, 4).map((x) => '· ' + (x.title || x.bvid).slice(0, 22)).join('  ')
+              div.appendChild(ul)
+            }
+            box.appendChild(div)
+          }
+        } catch { /* 读不到就算了 */ }
+      }
+      const clearRuns = async () => {
+        try {
+          if (!window.confirm('清空所有运行记录？（只删这份记录，不影响配置和已发评论）')) return
+          const r = await jpost('/runs/clear', {})
+          if (!r || !r.ok) return toast_('清空失败')
+          toast_('已清空')
+          loadRuns()
+        } catch (e) { toast_('清空失败：' + String(e?.message ?? e)) }
+      }
       /** 纯音乐本地识别：靠快慢/明暗给 BGM 打标签（不需要任何 AI 模型） */
       const analyzeAudioAssets = async () => {
         try {
@@ -1579,6 +1618,11 @@ window.__ModuleLoader__.load({
                   'data-bd-btn': '', className: 'outline sm', onClick: resetQuota,
                   title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
                 }, '重置今日额度')))),
+          Card({ title: '运行小结', sub: '插件自己记的时间线（不依赖 DSH 会话，跑几轮都不会丢）' },
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadRuns }, '刷新'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: clearRuns }, '清空记录')),
+            h('div', { 'data-bd-runs': '' }, h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '点「刷新」看最近几轮'))),
           h('div', { 'data-bd-rowflex': '' },
             Card({ title: '降级链', sub: null, right: Tag({ c: ep.length ? 'green' : 'red', children: ep.length ? (ep.length + ' 节') : '空' }) },
               h('div', { 'data-bd-sum': '' }, ep.length ? ('当前生效：' + (ep[0] ? ep[0].label : '—') + '；出问题自动切下一节' + ((st.chain && st.chain.hostPresets) ? ('（含 ' + st.chain.hostPresets + ' 个 DSH 预设）') : '')) : '还没加模型：去「模型与密钥」加一个并加入降级链。'),
@@ -2350,6 +2394,7 @@ window.__ModuleLoader__.load({
         const openAssets = async () => {
           try { const r = await jpost('/assets/reveal', {}); if (r && r.dir) toast_('已打开：' + r.dir) } catch { toast_('打不开素材文件夹') }
         }
+        setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
