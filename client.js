@@ -233,6 +233,11 @@ window.__ModuleLoader__.load({
     .narrow [data-bd-floatsave]{right:10px;bottom:96px;gap:8px;padding:7px 10px;}
     /* 浮动保存条出现时，给内容底部留出空间，避免盖住最后几行设置 */
     [data-bd-page].has-floatsave [data-bd-content]{padding-bottom:80px;}
+    /* 评论记录条目 */
+    [data-bd-cmt]{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;}
+    [data-bd-cmt] .t{font-size:12.5px;font-weight:600;color:var(--t1);}
+    [data-bd-cmt] .x{font-size:13px;line-height:1.7;margin:5px 0;color:var(--t1);white-space:pre-wrap;}
+    [data-bd-cmt] .m{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--t2);}
     [data-bd-foot]{text-align:center;font-size:11px;color:var(--t3);padding:4px 0 10px;line-height:1.8;}
 
     [data-bd-mask]{position:fixed;inset:0;background:rgba(17,17,17,.45);display:none;align-items:center;justify-content:center;z-index:50;}
@@ -534,6 +539,9 @@ window.__ModuleLoader__.load({
       const [envBusy, setEnvBusy] = React.useState(false)
       const [asrCheck, setAsrCheck] = React.useState(null)
       const [dshTesting, setDshTesting] = React.useState(false)
+      const [commentsList, setCommentsList] = React.useState(null)
+      const [commentsBusy, setCommentsBusy] = React.useState(0)
+      const [confirmRpid, setConfirmRpid] = React.useState(0)
       const [asrChecking, setAsrChecking] = React.useState(false)
       const [newKw, setNewKw] = React.useState('')
       // 设置页纯文本/数字输入：用本地草稿，避免被 2 秒轮询的 state 覆盖（与 keyword/persona 同策略）
@@ -831,6 +839,26 @@ window.__ModuleLoader__.load({
           else toast_('还是没找到 Python，下面列出了试过的每个路径')
         } catch (e) { toast_('检测失败：' + String(e?.message ?? e)) } finally { setEnvBusy(false) }
       }
+      /** 评论记录：看发过什么 */
+      const loadComments = async () => {
+        try { const r = await jget('/comments'); setCommentsList((r && r.items) || []) } catch { setCommentsList([]) }
+      }
+      /** 只撤指定的那一条（两段确认：先点「撤回这条」，再点「确认删除」） */
+      const delComment = async (rpid) => {
+        if (commentsBusy) return
+        setCommentsBusy(rpid)
+        try {
+          const r = await jpost('/comments/delete', { rpid })
+          if (r && r.ok) {
+            toast_(r.already ? '那条其实早就删过了，本地记录已清理' : '已撤回这一条')
+            setCommentsList((l) => (l || []).filter((x) => Number(x.rpid) !== rpid))
+          } else toast_('没删成：' + ((r && r.error) || '未知'))
+        } catch (e) { toast_('失败：' + String(e?.message ?? e)) } finally { setCommentsBusy(0); setConfirmRpid(0) }
+      }
+      React.useEffect(() => {
+        if (page === 'comments' && commentsList === null) loadComments()
+      }, [page, commentsList])
+
       /** 试验：把一句话投进 DSH 会话，验证接口通不通 */
       const testDshPush = async () => {
         setDshTesting(true)
@@ -983,7 +1011,7 @@ window.__ModuleLoader__.load({
       else if (st.safeMode) banner = h('div', { 'data-bd-banner': '' }, '安全模式：当前不会自动发评论、不会发私信。想真发时，到「设置」把「自动评论并 @」和「投递方式」打开。')
 
       /* ── 侧边导航 ── */
-      const PAGES = [['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'], ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'], ['settings', '设置']]
+      const PAGES = [['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'], ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'], ['comments', '评论'], ['settings', '设置']]
       const sidebar = h('aside', { 'data-bd-sidebar': '' },
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
@@ -991,6 +1019,37 @@ window.__ModuleLoader__.load({
         h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
+      const renderComments = () => {
+        const list = commentsList || []
+        const fmtT = (iso) => {
+          try {
+            const d = new Date(iso)
+            return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' +
+              String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+          } catch { return '' }
+        }
+        return h('div', { 'data-bd-pagewrap': '' },
+          h('div', { 'data-bd-pagetitle': '' },
+            h('span', { className: 't' }, '评论记录'),
+            h('span', { className: 's' }, '它发过的每一条都在这；撤哪条删哪条，不牵连别的')),
+          Card({
+            title: '已发出去的', sub: list.length + ' 条',
+            right: h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadComments }, '刷新'),
+          },
+            list.length ? list.map((it, i) => h('div', { key: i, 'data-bd-cmt': '' },
+              h('div', { className: 't' }, (it.kind === 'reply' ? '回复' : '评论') + ' · ' + String(it.title || it.bvid || '').slice(0, 30)),
+              h('div', { className: 'x' }, String(it.text || '')),
+              h('div', { className: 'm' },
+                h('span', null, fmtT(it.at) + ' · ' + it.bvid),
+                confirmRpid === Number(it.rpid)
+                  ? h('span', { style: { display: 'flex', gap: '6px' } },
+                      h('button', { 'data-bd-btn': '', className: 'sm', style: { color: 'var(--red-tx)', fontWeight: 600 }, disabled: !!commentsBusy, onClick: () => delComment(Number(it.rpid)) }, '确认删除'),
+                      h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => setConfirmRpid(0) }, '算了'))
+                  : h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: !!commentsBusy, onClick: () => setConfirmRpid(Number(it.rpid)) },
+                      commentsBusy === Number(it.rpid) ? '删除中…' : '撤回这条'))))
+              : h('div', { 'data-bd-empty': '' }, '还没有记录——跑一轮并且真的发出评论/回复后，这里就有了。')))
+      }
+
       const renderOverview = () => {
         const ep = (st.chain && st.chain.endpoints) || []
         const on = []; if (cfg.autoComment) on.push('自动评论'); if (cfg.dmMode && cfg.dmMode !== 'off') on.push('私信投递'); if (cfg.dmWatch) on.push('私信监察')
@@ -1654,7 +1713,7 @@ window.__ModuleLoader__.load({
         return h('div', { 'data-bd-pagewrap': '' }, blocks)
       }
 
-      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, settings: renderSettings }
+      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, comments: renderComments, settings: renderSettings }
       const content = h(PageBoundary, { onHome: () => setPage('overview') }, h('div', { 'data-bd-content': '' }, (PAGERENDER[page] || renderOverview)()))
 
       const modal = h('div', { 'data-bd-mask': '', className: login.open ? 'show' : undefined },
