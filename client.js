@@ -2488,6 +2488,9 @@ window.__ModuleLoader__.load({
                 h('span', { 'data-bd-ds': '' }, '配好后点上面的「🤖 AI 帮我写备注」'))),
 
             h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
+          Card({ title: '开场动态（可选，AI 生视频）', sub: '用 CogVideoX 生成 3 秒片头；排队久但只在开头用一次' },
+            ToggleRow({ label: '生成开场动态', note: '开了之后：整条片子先渲染好，再额外生成一段 3 秒 AI 动态拼在最前面。⚠️ 免费额度要排队，通常等 1~5 分钟；等太久会放弃并保留正常版本，不会毁掉已经做好的片子。用的是上面「画面生成模型」的地址和 Key', on: !!cfg.videoCogVideo, onChange: (v) => saveOne('videoCogVideo', v) }),
+            !!cfg.videoCogVideo && Input({ defaultValue: cfg.videoCogVideoModel || 'cogvideox-flash', placeholder: '视频模型名，默认 cogvideox-flash', onBlur: (e) => saveOne('videoCogVideoModel', String(e.target.value || '').trim(), '开场视频模型') })),
           Card({ title: '画面生成模型（可选，进阶）', sub: '用文生图接口给每张卡片画背景图；不填就用纯色卡片' },
             ToggleRow({ label: '启用画面生成', note: '开了才联网调文生图接口，每张卡片生成一张背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', on: !!cfg.videoImageEnabled, onChange: (v) => saveOne('videoImageEnabled', v) }),
             !!cfg.videoImageEnabled && h('div', { 'data-bd-imgmodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
