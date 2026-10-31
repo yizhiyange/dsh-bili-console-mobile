@@ -762,6 +762,16 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 纯音乐本地识别：靠快慢/明暗给 BGM 打标签（不需要任何 AI 模型） */
+      const analyzeAudioAssets = async () => {
+        try {
+          toast_('正在本地分析音频，几秒钟就好…')
+          const r = await jpost('/assets/analyze-audio', {})
+          if (!r || !r.ok) return toast_('失败：' + ((r && r.error) || ''))
+          toast_('写好了 ' + (r.updated || 0) + ' 条音乐备注')
+          renderAssetsInto(r.items || [])
+        } catch (e) { toast_('失败：' + String(e?.message ?? e)) }
+      }
       /** 测一下识图模型能不能真看图（素材库里的 AI 写备注要用它） */
       const testVision = async () => {
         try {
@@ -2418,7 +2428,8 @@ window.__ModuleLoader__.load({
             }),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: pickAndUploadAssets }, '📷 从相册/文件选素材'),
-              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: autoNoteAssets }, '🤖 AI 帮我写备注'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: autoNoteAssets }, '🤖 AI 帮我写备注（图片）'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: analyzeAudioAssets }, '🎵 识别音乐（BGM，本地）'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: exportAssets }, '📤 导出到手机'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: importAssets }, '📥 从手机导入'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开插件内目录'),
