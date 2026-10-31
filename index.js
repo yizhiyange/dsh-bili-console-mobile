@@ -36,7 +36,7 @@ import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
-import { asrStatus, asrReadiness, asrDiag, transcribeFile } from './lib/asr.mjs'
+import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -879,11 +879,17 @@ export function apply(ctx, _config) {
                 try {
                   const ready = await asrReadiness(c, py).catch(() => ({ ready: false }))
                   if (ready && ready.ready) {
-                    // 手机上 whisper 可能很慢，给 90 秒上限；超时就只用特征备注，别把请求挂死
+                    // 跟「设置 → 转写」保持一致：选了云端就用云端（快、不占手机内存），否则本地 whisper。
+                    // 之前这里写死本地，等于无视了用户的设置（2026-11-1 修）
                     asrTried++
+                    const isCloud = ready.mode === 'cloud'
+                    const job = isCloud
+                      ? transcribeCloud({ apiUrl: c.asrCloudUrl, apiKey: c.asrCloudKey, model: c.asrCloudModel, audioPath: join(dir, it.file) })
+                      : transcribeFile(py, join(dir, it.file), c.asrModel || 'small')
+                    // 手机上 whisper 可能很慢，给 90 秒上限；超时就只用特征备注，别把请求挂死
                     const tr = await Promise.race([
-                      transcribeFile(py, join(dir, it.file), c.asrModel || 'small'),
-                      new Promise((r) => setTimeout(() => r({ ok: false, error: '转写超时' }), 90000)),
+                      job,
+                      new Promise((r) => setTimeout(() => r({ ok: false, error: '转写超时' }), 120000)),
                     ])
                     if (!tr || !tr.ok) asrFail++
                     const txt = String((tr && tr.ok && tr.text) || '').replace(/\s+/g, ' ').trim()
