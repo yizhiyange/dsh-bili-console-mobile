@@ -83,6 +83,7 @@ export const Config = !z ? undefined : z.object({
   autoCoin: z.boolean().default(false).extra('volatile', true),
   coinPerDay: z.natural().default(2).extra('volatile', true),
   videoVoice: z.boolean().default(true).extra('volatile', true),
+  chainStrength: z.any().default({}).extra('volatile', true),
   thinkLevel: z.string().default('off').extra('volatile', true),
   videoVoiceName: z.string().default('zh-CN-XiaoxiaoNeural').extra('volatile', true),
   videoVoiceRate: z.string().default('+0%').extra('volatile', true),
