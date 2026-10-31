@@ -702,6 +702,31 @@ window.__ModuleLoader__.load({
         return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { document.removeEventListener('visibilitychange', onVis) } catch {} }
       }, [!!(state?.settings?.lowPower)])
 
+      /** 把素材库导出到手机可见目录（proot 路径用户在文件管理器里看不到） */
+      const exportAssets = async () => {
+        try {
+          const r = await jpost('/export', { what: 'assets' })
+          if (!r || !r.ok) return toast_('导出失败：' + ((r && r.error) || ''))
+          toast_('已导出 ' + (r.copied || 0) + ' 个到：' + r.dest)
+        } catch (e) { toast_('导出失败：' + String(e?.message ?? e)) }
+      }
+      /** 从手机目录把文件导进素材库 */
+      const importAssets = async () => {
+        try {
+          const r = await jpost('/import-assets', {})
+          if (!r || !r.ok) return toast_('导入失败：' + ((r && r.error) || ''))
+          toast_(r.copied ? ('已从手机导入 ' + r.copied + ' 个素材') : '手机目录里没找到图片/音频（先从文件管理器放进 dsh-bili-console 文件夹）')
+          try { loadAssets() } catch { /* 列表稍后刷新 */ }
+        } catch (e) { toast_('导入失败：' + String(e?.message ?? e)) }
+      }
+      /** 把某个视频导出到手机（并尝试用系统播放器打开） */
+      const exportVideo = async (name) => {
+        try {
+          const r = await jpost('/export', { what: 'video', name })
+          if (!r || !r.ok) return toast_('导出失败：' + ((r && r.error) || ''))
+          toast_('已导出到：' + r.dest + (r.opened ? '（已用系统播放器打开）' : ''))
+        } catch (e) { toast_('导出失败：' + String(e?.message ?? e)) }
+      }
       /** 内存状况 + 手动释放（运行内存，不是磁盘空间） */
       /** 一键套用音色预设：四个参数一起设好，然后立刻试听 */
       /** 配音试听：拿当前声线/语速/音调/音量念一句，直接播 */
@@ -728,7 +753,7 @@ window.__ModuleLoader__.load({
           const mb = (b) => (Math.round((Number(b) || 0) / 1048576 * 10) / 10) + 'MB'
           const m = r && r.mem
           const p = (r && r.power) || {}
-          let html = '插件进程现在占：' + mb(r && r.rss)
+          let html = '宿主进程（DSH + 插件）现在占：' + mb(r && r.rss)
           if (m) {
             html += '<br>手机可用内存：' + mb(m.available) + ' / 共 ' + mb(m.total)
             if (m.swapTotal > 0) html += '<br>系统已在用交换内存：' + mb(m.swapTotal - m.swapFree) + ' / ' + mb(m.swapTotal) + '（不用我们再弄）'
@@ -789,12 +814,19 @@ window.__ModuleLoader__.load({
             const title = document.createElement('div')
             title.style.cssText = 'font-size:12px;color:var(--t2);margin-bottom:6px;word-break:break-all'
             title.textContent = f.name + '（' + Math.round((f.size || 0) / 1024) + 'KB）'
-            const v = document.createElement('video')
-            v.controls = true; v.playsInline = true; v.preload = 'metadata'
-            v.style.cssText = 'width:100%;max-height:240px;border-radius:6px;background:#000'
-            v.src = API + '/publish/video-file?n=' + encodeURIComponent(f.name)
-            wrap.appendChild(title); wrap.appendChild(v)
-            box.appendChild(wrap)
+              const v = document.createElement('video')
+              v.controls = true; v.playsInline = true; v.preload = 'metadata'
+              v.style.cssText = 'width:100%;max-height:240px;border-radius:6px;background:#000'
+              v.src = API + '/publish/video-file?n=' + encodeURIComponent(f.name)
+              const bar = document.createElement('div')
+              bar.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center'
+              const exp = document.createElement('button')
+              exp.className = 'ghost sm'
+              exp.textContent = '📤 导出到手机并播放'
+              exp.onclick = () => exportVideo(f.name)
+              bar.appendChild(exp)
+              wrap.appendChild(title); wrap.appendChild(v); wrap.appendChild(bar)
+              box.appendChild(wrap)
           }
         } catch { /* 列表拿不到就算了 */ }
       }
@@ -2209,7 +2241,7 @@ window.__ModuleLoader__.load({
                 h('option', { value: '' }, '自动'),
                 (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
             ToggleRow({ label: '省电模式（针对手机）', note: '开了之后：①界面轮询从 2 秒放慢到 6 秒、手机在后台（锁屏/切 App）时完全不打请求；②私信监察间隔放宽到 3 倍；③渲染时限制 ffmpeg 单线程 + ultrafast，不再把 CPU 吃满（文件会大 10~20%，画质肉眼看不出）。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
-            Card({ title: '内存（运行内存，不是存储空间）', sub: '手机上看这个最有用：占用一大，系统就会把你后台的插件杀掉' },
+            Card({ title: '内存（运行内存，不是存储空间）', sub: '注意：这里显示的是宿主进程总量（DSH 本体 + 本插件），不是插件单独占的' },
               h('div', { 'data-bd-meminfo': '', style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.9 } }, '读取中…'),
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: doFreeMemory }, '🧹 释放一下'),
@@ -2221,7 +2253,9 @@ window.__ModuleLoader__.load({
               on: !!cfg.useAssets, onChange: (v) => saveOne('useAssets', v),
             }),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
-              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开素材文件夹'),
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: exportAssets }, '📤 导出到手机（文件管理器能看见）'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: importAssets }, '📥 从手机导入'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开插件内目录'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadAssets }, '刷新列表')),
             h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
           Card({ title: '画面生成模型（可选，进阶）', sub: '用文生图接口给每张卡片画背景图；不填就用纯色卡片' },
