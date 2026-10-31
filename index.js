@@ -83,6 +83,7 @@ export const Config = !z ? undefined : z.object({
   autoCoin: z.boolean().default(false).extra('volatile', true),
   coinPerDay: z.natural().default(2).extra('volatile', true),
   videoVoice: z.boolean().default(true).extra('volatile', true),
+  thinkLevel: z.string().default('off').extra('volatile', true),
   videoVoiceName: z.string().default('zh-CN-XiaoxiaoNeural').extra('volatile', true),
   videoVoiceRate: z.string().default('+0%').extra('volatile', true),
   videoVoicePitch: z.string().default('+0Hz').extra('volatile', true),
@@ -165,15 +166,18 @@ const PAGE_PREFIX = '/bili-console'
  * 这里挑一个真实外置存储目录（下载目录优先），插件把文件复制过去 + 通知相册/媒体库扫描。
  */
 function findExternalDir() {
+  // 优先「下载」目录（手机文件管理器里最容易找到）；不存在就尝试创建，
+  // 都失败才退回存储根目录（之前直接用了 /sdcard/dsh-bili-console，用户在下载里找不到，2026-11-1 修）
   const cands = [
-    process.env.EXTERNAL_STORAGE,
     '/sdcard/Download',
     '/storage/emulated/0/Download',
+    process.env.EXTERNAL_STORAGE ? join(process.env.EXTERNAL_STORAGE, 'Download') : '',
     '/sdcard',
     '/storage/emulated/0',
   ].filter(Boolean)
   for (const base of cands) {
     try {
+      try { if (!existsSync(base)) mkdirSync(base, { recursive: true }) } catch { /* 建不了就试下一个 */ }
       if (!existsSync(base)) continue
       const dir = join(base, 'dsh-bili-console')
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -750,6 +754,16 @@ export function apply(ctx, _config) {
           if (!/\.(png|jpg|jpeg|webp|gif|mp3|wav|m4a|aac|ogg)$/.test(lower)) continue
           try { copyFileSync(join(ext, f), join(dst, f)); n++ } catch { /* 跳过 */ }
         }
+        // 导入时自动把文件名当备注写进去（省得用户一条条打字；之后想改再改）
+        try {
+          const items = listAssets(home)
+          const filled = items.map((it) => ({
+            file: it.file,
+            note: it.note || it.hint || '',
+            kind: it.kind,
+          }))
+          saveAssets(home, filled)
+        } catch { /* 写备注失败不影响导入 */ }
         logLine(home, `从手机目录导入素材 ${n} 个（${ext}）`)
         return sendJson(res, 200, { ok: true, copied: n, from: ext })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
