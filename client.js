@@ -2105,13 +2105,29 @@ window.__ModuleLoader__.load({
             name.style.cssText = 'font-size:12px;color:var(--t2);min-width:110px;max-width:150px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
             const inp = document.createElement('input')
             inp.value = it.note || ''
-            inp.placeholder = '这个素材什么时候用？（必填，AI 靠它判断）'
+            inp.placeholder = it.hint ? ('可直接用文件名：' + it.hint + '（改了更好）') : '这个素材什么时候用？（AI 靠它判断）'
             inp.dataset.file = it.file
+            inp.dataset.hint = it.hint || ''
             inp.style.cssText = 'flex:1;min-width:100px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--t1);font-size:12px'
             row.appendChild(name)
             row.appendChild(inp)
             box.appendChild(row)
           }
+          const bar = document.createElement('div')
+          bar.style.cssText = 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'
+          const fillAll = document.createElement('button')
+          fillAll.textContent = '⚡ 空的全按文件名填'
+          fillAll.setAttribute('data-bd-btn', '')
+          fillAll.className = 'ghost sm'
+          fillAll.title = '只填空着的，已经写过的不动'
+          fillAll.onclick = () => {
+            [...box.querySelectorAll('input[data-file]')].forEach((el) => {
+              if (!el.value.trim() && el.dataset.hint) el.value = el.dataset.hint
+            })
+            toast_('已按文件名填好，检查一下再点保存')
+          }
+          bar.appendChild(fillAll)
+          box.appendChild(bar)
           const save = document.createElement('button')
           save.textContent = '保存备注'
           save.setAttribute('data-bd-btn', '')
