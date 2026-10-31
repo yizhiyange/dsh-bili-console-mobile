@@ -1847,6 +1847,19 @@ window.__ModuleLoader__.load({
         const readVal = (sel) => {
           try { const el = document.querySelector(sel); return el ? String(el.value || '').trim() : '' } catch { return '' }
         }
+        // 今天的标题（给"没思路"的人当主题候选）
+        const todayTitles = (() => {
+          try {
+            const md = String((st.report && st.report.markdown) || '')
+            const out = []
+            for (const m of md.matchAll(/标题：([^\n]{4,50})/g)) {
+              const t = String(m[1]).split('（关键词')[0].trim()
+              if (t && !out.includes(t)) out.push(t)
+              if (out.length >= 4) break
+            }
+            return out
+          } catch { return [] }
+        })()
         const doDynamic = async () => {
           const text = readVal('[data-bd-dyninput] textarea')
           if (!text) return toast_('先写点内容再发')
@@ -1901,12 +1914,73 @@ window.__ModuleLoader__.load({
             setTimeout(tick, 1200)
           } catch (e) { toast_('启动失败：' + String(e?.message ?? e)) }
         }
+        /** 把素材列表画进 DOM（不用 React state：这些组件是直接调用式，加 hooks 会崩） */
+        const renderAssetsInto = (items) => {
+          const box = document.querySelector('[data-bd-assets]')
+          if (!box) return
+          box.textContent = ''
+          if (!items || !items.length) {
+            box.textContent = '（还没有素材。点「打开素材文件夹」，把图片/音频丢进去，再点「刷新列表」）'
+            return
+          }
+          for (const it of items) {
+            const row = document.createElement('div')
+            row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px'
+            const name = document.createElement('span')
+            name.textContent = it.file + (it.kind === 'video' ? '（视频只归档，不剪进去）' : '')
+            name.style.cssText = 'font-size:12px;color:var(--t2);min-width:110px;max-width:150px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+            const inp = document.createElement('input')
+            inp.value = it.note || ''
+            inp.placeholder = '这个素材什么时候用？（必填，AI 靠它判断）'
+            inp.dataset.file = it.file
+            inp.style.cssText = 'flex:1;min-width:100px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--t1);font-size:12px'
+            row.appendChild(name)
+            row.appendChild(inp)
+            box.appendChild(row)
+          }
+          const save = document.createElement('button')
+          save.textContent = '保存备注'
+          save.setAttribute('data-bd-btn', '')
+          save.className = 'primary sm'
+          save.style.marginTop = '8px'
+          save.onclick = async () => {
+            const items2 = [...box.querySelectorAll('input[data-file]')].map((el) => ({ file: el.dataset.file, note: el.value }))
+            try {
+              const r = await jpost('/assets', { items: items2 })
+              if (r && r.ok) { toast_('备注已保存'); renderAssetsInto(r.items || []) } else toast_('保存失败')
+            } catch (e) { toast_('保存失败：' + String(e?.message ?? e)) }
+          }
+          box.appendChild(save)
+        }
+        const loadAssets = async () => {
+          try { const r = await jget('/assets'); renderAssetsInto((r && r.items) || []) } catch { toast_('读素材列表失败') }
+        }
+        const openAssets = async () => {
+          try { const r = await jpost('/assets/reveal', {}); if (r && r.dir) toast_('已打开：' + r.dir) } catch { toast_('打不开素材文件夹') }
+        }
+        // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
+        setTimeout(() => {
+          const box = document.querySelector('[data-bd-assets]')
+          if (box && !box.dataset.loaded) { box.dataset.loaded = '1'; loadAssets() }
+        }, 120)
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '发布'),
             h('span', { className: 's' }, '生成 / 发动态 / 投稿视频——内容你自己把关')),
           Card({ title: '一键生成视频（最简图文）', sub: 'AI 写文案 → 本地渲染，零额外 API 费；首次要装约 30MB 渲染组件' },
             h('div', { 'data-bd-input': '', 'data-bd-vtopic': '' },
-              h('input', { placeholder: '主题（留空就用今天刷到的内容）' })),
+              h('input', { placeholder: '可选：写个主题（例如「这周 AI 圈三个变化」）。注意：只有开了 AI 写稿主题才生效；模板模式固定用今天刷到的标题' })),
+            h('div', { 'data-bd-ds': '', style: { marginTop: '6px' } }, '没思路？点一个当主题：'),
+            todayTitles.length
+              ? h('div', { style: { marginTop: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                todayTitles.map((t, i) => h('button', {
+                  key: i, 'data-bd-btn': '', className: 'ghost sm',
+                  onClick: () => {
+                    const inp = document.querySelector('[data-bd-vtopic] input')
+                    if (inp) { inp.value = t; inp.dispatchEvent(new Event('input', { bubbles: true })) }
+                    toast_('已填入主题，可以自己改一下')
+                  },
+                }, t.slice(0, 14) + (t.length > 14 ? '…' : ''))))
+              : h('div', { 'data-bd-ds': '', style: { marginTop: '4px', color: 'var(--t3)' } }, '（今天还没跑过，没有现成标题）'),
             h('div', { style: { marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: startGen }, '生成视频'),
               h('div', { 'data-bd-upbar': '', style: { flex: 1, minWidth: '110px' } },
@@ -1917,26 +1991,41 @@ window.__ModuleLoader__.load({
             ToggleRow({ label: '配音（需联网）', note: '用免费 edge-tts 合成旁白；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
             ToggleRow({ label: '用 AI 写稿', note: '关掉 = 用当天刷到的标题拼合集，不需要任何模型 / key', on: cfg.videoUseAI !== false, onChange: (v) => saveOne('videoUseAI', v) }),
             h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '清晰度'), h('div', { 'data-bd-ds': '' }, '自动 = 电脑 720p、手机 480p（手机自己降档，不影响电脑）')),
-              Select({ value: cfg.videoQuality || 'auto', onChange: (v) => saveOne('videoQuality', v), minWidth: 120 },
-                h('option', { value: 'auto' }, '自动'),
-                h('option', { value: '720' }, '720p'),
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '清晰度'), h('div', { 'data-bd-ds': '' }, '默认 720p；1080p 更清楚但更慢；480p 只建议极端省电（会糊）')),
+              Select({ value: cfg.videoQuality || '720', onChange: (v) => saveOne('videoQuality', v), minWidth: 120 },
+                h('option', { value: '720' }, '720p（默认）'),
+                h('option', { value: '1080' }, '1080p'),
                 h('option', { value: '480' }, '480p 省电'))),
             h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '最多几张卡片'), h('div', { 'data-bd-ds': '' }, '越多越长；手机建议 4 张')),
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '视频卡片数（画面张数）'), h('div', { 'data-bd-ds': '' }, '指视频里翻页的文字画面有几张（就是 PPT 页数），不是人格卡；人格卡在「人设」页配置，这里会自动沿用。越多视频越长；手机建议 4 张')),
               Stepper({ value: (cfg.videoMaxCards || 6) + ' 张', onStep: (d) => step('videoMaxCards', d, ' 张') })),
             h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' },
-                h('div', { 'data-bd-lb': '' }, '用哪个模型写稿'),
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '写稿用哪个模型'),
                 h('div', { 'data-bd-ds': '' }, (() => {
                   const eps = (st.chain && st.chain.endpoints) || []
-                  return eps.length
-                    ? ('自动 = 跟发评论同一条降级链（当前 ' + eps.length + ' 个模型）')
-                    : '现在没有可用模型 → 会自动用模板合集（不需要 key）'
+                  return '「DSH 模型」= 直接读 DSH 设置页里配好的模型（不走发评论的降级链）；「跟评论链」= 和发评论完全同一条降级链。现在 DSH 里有 ' + eps.length + ' 个可用模型'
+                    + (eps.length ? '' : '；选「不用模型」则连 key 都不需要')
                 })())),
+              Select({ value: (cfg.videoUseAI === false ? 'off' : (cfg.videoModelSource || 'dsh')), onChange: (v) => { if (v === 'off') { saveOne('videoUseAI', false) } else { saveOne('videoUseAI', true); saveOne('videoModelSource', v) } }, minWidth: 140 },
+                h('option', { value: 'off' }, '不用模型（模板合集，零 key）'),
+                h('option', { value: 'dsh' }, 'DSH 模型（推荐）'),
+                h('option', { value: 'chain' }, '跟评论同一条链'))),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '指定具体模型'), h('div', { 'data-bd-ds': '' }, '列表就是上面选的来源里的模型（名字 = DSH 设置页里你看到的）；不选就自动用第一个可用的')),
               Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
-                h('option', { value: '' }, '自动（跟评论一样）'),
-                (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id)))))),
+                h('option', { value: '' }, '自动'),
+                (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
+            ToggleRow({ label: '省电模式', note: '界面轮询从 2 秒放慢到 6 秒；渲染降到 20fps、少占 CPU。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
+          Card({ title: '素材库', sub: '图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断什么时候用' },
+            ToggleRow({
+              label: '启用素材库',
+              note: '开着时，AI 写稿时会看到素材备注，自己判断这条视频要不要用某个素材；没备注的素材一律不会被用',
+              on: !!cfg.useAssets, onChange: (v) => saveOne('useAssets', v),
+            }),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开素材文件夹'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadAssets }, '刷新列表')),
+            h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
           Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
             h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
               h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
