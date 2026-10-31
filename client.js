@@ -1906,12 +1906,66 @@ window.__ModuleLoader__.load({
             toast_(r && r.ok ? '投稿已提交（B站还要审核）' : ('投稿失败：' + ((r && (r.error || r.message)) || '未知')))
           } catch (e) { toast_('投稿失败：' + String(e?.message ?? e)) }
         }
+        /** 自定义模型的草稿：手机上输入框失去焦点经常不触发，所以先记草稿，点「保存」才落盘 */
+        const custDraft = React.useRef({})
+        const draftUpd = (k, v) => { custDraft.current[k] = String(v || '').trim() }
+        const setCMsg = (t) => { const el = document.querySelector('[data-bd-cmsg]'); if (el) el.textContent = t }
+        const saveCustomModel = async () => {
+          try {
+            const d = custDraft.current
+            if (!Object.keys(d).length) return setCMsg('你还没改任何东西')
+            setCMsg('保存中…')
+            const r = await jpost('/settings', d)
+            if (!r || !r.ok) return setCMsg('保存失败：' + ((r && r.error) || ''))
+            custDraft.current = {}
+            setCMsg('✓ 已保存（' + Object.keys(d).length + ' 项）')
+            toast_('自定义模型已保存')
+          } catch (e) { setCMsg('保存失败：' + String(e?.message ?? e)) }
+        }
+        /** 测一下这个自定义模型能不能真跑：让模型写一张卡片试试 */
+        const testCustomModel = async () => {
+          try {
+            setCMsg('正在连接…')
+            const d = custDraft.current
+            const patch = {}
+            for (const k of ['videoCustomBaseUrl', 'videoCustomModel', 'videoCustomKey', 'videoCustomName']) if (d[k] !== undefined) patch[k] = d[k]
+            if (Object.keys(patch).length) await jpost('/settings', patch)
+            const r = await jpost('/publish/test-model', {})
+            if (!r || !r.ok) return setCMsg('✗ ' + ((r && r.error) || '连不上'))
+            setCMsg('✓ 连上了：' + String((r && r.reply) || '').slice(0, 40))
+          } catch (e) { setCMsg('✗ ' + String(e?.message ?? e)) }
+        }
+        /** 直接在插件页面里看生成的视频（不用等 B 站） */
+        const loadVideoList = async () => {
+          try {
+            const r = await jget('/publish/video-list')
+            const box = document.querySelector('[data-bd-vidlist]')
+            if (!box) return
+            const files = (r && r.files) || []
+            if (!files.length) { box.innerHTML = ''; return }
+            box.innerHTML = ''
+            for (const f of files) {
+              const wrap = document.createElement('div')
+              wrap.style.cssText = 'margin:10px 0;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--gray-bg)'
+              const title = document.createElement('div')
+              title.style.cssText = 'font-size:12px;color:var(--t2);margin-bottom:6px;word-break:break-all'
+              title.textContent = f.name + '（' + Math.round((f.size || 0) / 1024) + 'KB）'
+              const v = document.createElement('video')
+              v.controls = true; v.playsInline = true; v.preload = 'metadata'
+              v.style.cssText = 'width:100%;max-height:240px;border-radius:6px;background:#000'
+              v.src = API + '/publish/video-file?n=' + encodeURIComponent(f.name)
+              wrap.appendChild(title); wrap.appendChild(v)
+              box.appendChild(wrap)
+            }
+          } catch { /* 列表拿不到就算了 */ }
+        }
+        React.useEffect(() => { loadVideoList() }, [])
         /** 配音试听：拿当前声线/语速/音调/音量念一句，直接播 */
         const doTtsPreview = async () => {
           try {
             const msg = document.querySelector('[data-bd-ttsmsg]')
             const btn = document.querySelector('[data-bd-ttsbtn]')
-            if (msg) msg.textContent = '正在合成…'
+            if (msg) msg.textContent = '准备中…（没装配音组件的话会自动装一次，约 30MB，只第一次要等）'
             if (btn) btn.disabled = true
             const r = await jpost('/publish/tts-preview', {})
             if (btn) btn.disabled = false
@@ -1940,7 +1994,8 @@ window.__ModuleLoader__.load({
                 if (s.done && s.outPath) {
                   const inp = document.querySelector('[data-bd-vidpath] input')
                   if (inp) { inp.value = s.outPath; inp.dispatchEvent(new Event('input', { bubbles: true })) }
-                  toast_('生成好了，路径已自动填进「投稿视频」')
+                  toast_('生成好了，路径已自动填进「投稿视频」，下面可以直接放着看')
+                  loadVideoList()
                   return
                 }
                 if (s.error) return
@@ -2063,6 +2118,7 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', 'data-bd-ttsbtn': '', onClick: doTtsPreview }, '▶ 试听'),
                 h('span', { 'data-bd-ttsmsg': '', style: { fontSize: '11.5px', color: 'var(--t2)' } }, ''))),
+            h('div', { 'data-bd-vidlist': '', style: { marginTop: '6px' } }, ''),
             ToggleRow({ label: '用 AI 写稿', note: '关掉 = 用当天刷到的标题拼合集，不需要任何模型 / key', on: cfg.videoUseAI !== false, onChange: (v) => saveOne('videoUseAI', v) }),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '清晰度'), h('div', { 'data-bd-ds': '' }, '默认 720p；1080p 更清楚但更慢；480p 只建议极端省电（会糊）')),
@@ -2085,14 +2141,19 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'dsh' }, 'DSH 模型（推荐）'),
                 h('option', { value: 'chain' }, '跟评论同一条链'),
                 h('option', { value: 'custom' }, '自定义（写稿专用）'))),
-            (cfg.videoUseAI !== false && cfg.videoModelSource === 'custom') && h('div', { 'data-bd-custommodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
+            (cfg.videoUseAI !== false && cfg.videoModelSource === 'custom') &&               h('div', { 'data-bd-custommodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
               h('div', null, '写稿专用自定义模型（只给视频文案用，和发评论的完全分开；兼容 OpenAI 格式的接口都行）'),
-              h(Input, { defaultValue: cfg.videoCustomBaseUrl || '', placeholder: '接口地址，结尾带 /v1 或 /v4，如 https://api.deepseek.com/v1', onBlur: (e) => saveOne('videoCustomBaseUrl', String(e.target.value || '').trim(), '写稿接口地址') }),
-              h(Input, { defaultValue: cfg.videoCustomModel || '', placeholder: '模型名，如 deepseek-chat / glm-4-flash / qwen-turbo 这类', onBlur: (e) => saveOne('videoCustomModel', String(e.target.value || '').trim(), '写稿模型名') }),
-              h(Input, { defaultValue: cfg.videoCustomKey || '', type: 'password', placeholder: '这个模型的 API Key（存本地配置，不会上传）', onBlur: (e) => saveOne('videoCustomKey', String(e.target.value || '').trim(), '写稿 Key') }),
-              h(Input, { defaultValue: cfg.videoCustomName || '', placeholder: '显示名（可选，如「免费小模型」）', onBlur: (e) => saveOne('videoCustomName', String(e.target.value || '').trim(), '显示名') })),
-            h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '指定具体模型'), h('div', { 'data-bd-ds': '' }, '列表就是上面选的来源里的模型（名字 = DSH 设置页里你看到的）；不选就自动用第一个可用的')),
+              h(Input, { defaultValue: cfg.videoCustomBaseUrl || '', placeholder: '接口地址，结尾带 /v1 或 /v4，如 https://api.deepseek.com/v1', key: 'u' + (cfg.videoCustomBaseUrl || ''), onBlur: (e) => draftUpd('videoCustomBaseUrl', e.target.value) }),
+              h(Input, { defaultValue: cfg.videoCustomModel || '', placeholder: '模型名，如 deepseek-chat / glm-4-flash / qwen-turbo 这类', key: 'm' + (cfg.videoCustomModel || ''), onBlur: (e) => draftUpd('videoCustomModel', e.target.value) }),
+              h(Input, { defaultValue: cfg.videoCustomKey || '', type: 'password', key: 'k' + (cfg.videoCustomKey || ''), placeholder: '这个模型的 API Key（存本地配置，不会上传）', onBlur: (e) => draftUpd('videoCustomKey', e.target.value) }),
+              h(Input, { defaultValue: cfg.videoCustomName || '', placeholder: '显示名（可选，如「免费小模型」）', key: 'n' + (cfg.videoCustomName || ''), onBlur: (e) => draftUpd('videoCustomName', e.target.value) }),
+              h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '4px' } },
+                h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveCustomModel }, '💾 保存'),
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: testCustomModel }, '🔌 测一下能不能连上'),
+                h('span', { 'data-bd-cmsg': '', style: { fontSize: '11.5px', color: 'var(--t2)' } }, '填完记得点保存'))),
+            (!(cfg.videoUseAI === false) && cfg.videoModelSource !== 'custom') && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '指定具体模型'),
+                h('div', { 'data-bd-ds': '' }, '列表就是上面选的来源里的模型（名字 = DSH 设置页里你看到的）；不选就自动用第一个可用的。选了「自定义」时这一项不生效（别挑了，直接用的就是上面那套）')),
               Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
                 h('option', { value: '' }, '自动'),
                 (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
