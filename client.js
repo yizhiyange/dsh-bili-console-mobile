@@ -826,10 +826,29 @@ window.__ModuleLoader__.load({
       /** 测一下文生图接口（智谱 CogView-3-Flash 免费，先验通了再开） */
       const testImageGen = async () => {
         try {
+          const box = document.querySelector('[data-bd-imgpv]')
+          if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">正在生成…（几秒~十几秒）</div>'
           toast_('正在试生成一张图，可能要十几秒…')
           const r = await jpost('/video/test-image', {})
-          if (!r || !r.ok) return toast_('✗ ' + ((r && r.error) || '失败'))
+          if (!r || !r.ok) {
+            if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">生成失败：' + ((r && r.error) || '') + '</div>'
+            return toast_('✗ ' + ((r && r.error) || '失败'))
+          }
           toast_('✓ 能生图（' + (r.model || '') + '，' + Math.round((r.size || 0) / 1024) + 'KB）')
+          if (box) {
+            box.innerHTML = ''
+            if (r.dataUrl) {
+              const img = document.createElement('img')
+              img.src = r.dataUrl
+              img.style.cssText = 'width:100%;max-width:420px;border-radius:10px;border:1px solid var(--line);display:block'
+              const tip = document.createElement('div')
+              tip.style.cssText = 'font-size:11.5px;color:var(--t3);margin-top:6px'
+              tip.textContent = '这就是卡片背景会长成的样子（每次不同）。生成视频时每张卡片会各画一张。'
+              box.appendChild(img); box.appendChild(tip)
+            } else {
+              box.innerHTML = '<div style="font-size:12px;color:var(--t3)">接口通了，但没拿到图片数据</div>'
+            }
+          }
         } catch (e) { toast_('✗ ' + String(e?.message ?? e)) }
       }
       /** 删掉一个生成的视频（手机存储紧张时用） */
@@ -2500,7 +2519,8 @@ window.__ModuleLoader__.load({
               h(Input, { defaultValue: cfg.videoImageKey || '', type: 'password', placeholder: '文生图接口的 API Key（存本地配置，不会上传）', onBlur: (e) => saveOne('videoImageKey', String(e.target.value || '').trim(), '画面 Key') }),
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap', alignItems: 'center' } },
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: testImageGen }, '🖼 测一下能不能生图'),
-                h('span', { style: { fontSize: '11px' } }, '每张卡片会花几秒~十几秒；图生得越多，出片越慢')))),
+                h('span', { style: { fontSize: '11px' } }, '每张卡片会花几秒~十几秒；图生得越多，出片越慢')),
+              h('div', { 'data-bd-imgpv': '', style: { marginTop: '10px' } }))),
           Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
             h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
               h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
