@@ -824,6 +824,46 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
+    // 上传素材（2026-11-1）：前端把相册/文件里选的图片、音频读成 base64 传过来，
+    // 这里直接落进插件素材库。**彻底绕开文件管理器/proot 路径**，用户不用知道任何目录。
+    if (req.method === 'POST' && path === '/assets/upload') {
+      try {
+        const b = await readBody(req)
+        const list = Array.isArray(b.files) ? b.files : []
+        if (!list.length) return sendJson(res, 200, { ok: false, error: '没收到文件' })
+        const dir = join(home, 'assets')
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+        const saved = []
+        const skipped = []
+        for (const f of list.slice(0, 20)) {
+          try {
+            const name0 = String(f.name || 'file').replace(/[/\\]/g, '_').slice(-80)
+            const ext = (name0.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase()
+            if (!/^\.(png|jpe?g|webp|gif|mp3|wav|m4a|aac|ogg)$/.test(ext)) { skipped.push(name0 + '（类型不支持）'); continue }
+            const raw = String(f.data || '')
+            const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+            const buf = Buffer.from(b64, 'base64')
+            if (!buf.length) { skipped.push(name0 + '（空文件）'); continue }
+            if (buf.length > 25 * 1024 * 1024) { skipped.push(name0 + '（超过 25MB）'); continue }
+            // 同名就加序号，别覆盖用户已有素材
+            let out = name0
+            let n = 1
+            while (existsSync(join(dir, out))) {
+              out = name0.replace(ext, '') + '_' + (n++) + ext
+            }
+            writeFileSync(join(dir, out), buf)
+            saved.push(out)
+          } catch (e) { skipped.push(String((e && e.message) || e).slice(0, 60)) }
+        }
+        // 新素材自动用文件名当备注（不用用户打字）
+        try {
+          const items = listAssets(home).map((it) => ({ file: it.file, note: it.note || it.hint || '', kind: it.kind }))
+          saveAssets(home, items)
+        } catch { /* 写备注失败不影响上传 */ }
+        logLine(home, `上传素材 ${saved.length} 个` + (skipped.length ? ('，跳过 ' + skipped.length + ' 个') : ''))
+        return sendJson(res, 200, { ok: saved.length > 0, saved, skipped, items: listAssets(home) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     if (req.method === 'GET' && path === '/assets') {
       return sendJson(res, 200, { ok: true, items: listAssets(home) })
     }
