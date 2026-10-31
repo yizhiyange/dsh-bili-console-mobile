@@ -21,7 +21,7 @@
  * ============================================================================
  */
 import { createReadStream } from 'node:fs'
-import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -158,6 +158,67 @@ const PAGE_PREFIX = '/bili-console'
  *
  * @returns {Promise<{ok:boolean, method:string}>} ok=true 表示确实把浏览器拉起来了
  */
+/**
+ * 找手机里「用户能看见」的目录（2026-11-1 加）
+ * 为什么要：proot 里的 /root/.dsh/... 和安卓文件管理器完全是两个世界，
+ * 用户在文件管理器里根本搜不到，也没法往里放素材。
+ * 这里挑一个真实外置存储目录（下载目录优先），插件把文件复制过去 + 通知相册/媒体库扫描。
+ */
+function findExternalDir() {
+  const cands = [
+    process.env.EXTERNAL_STORAGE,
+    '/sdcard/Download',
+    '/storage/emulated/0/Download',
+    '/sdcard',
+    '/storage/emulated/0',
+  ].filter(Boolean)
+  for (const base of cands) {
+    try {
+      if (!existsSync(base)) continue
+      const dir = join(base, 'dsh-bili-console')
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+      // 真写一次才算可写（有些目录存在但只读）
+      const probe = join(dir, '.w')
+      writeFileSync(probe, '1')
+      rmSync(probe)
+      return dir
+    } catch { /* 换下一个 */ }
+  }
+  return ''
+}
+
+/** 让安卓媒体库/文件管理器知道有这个新文件（不通知的话要等很久才可见） */
+async function notifyMediaScanner(p) {
+  try {
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const run = promisify(execFile)
+    await run('/system/bin/sh', ['-c', `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file://${p}" 2>&1`], { timeout: 4000, windowsHide: true })
+    return true
+  } catch { return false }
+}
+
+/** 用系统文件管理器/播放器打开某个文件 */
+async function openWithSystem(p) {
+  const safe = String(p).replace(/["'$\\`|;&<>\n\r]/g, '')
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const run = promisify(execFile)
+  const tries = [
+    ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "file://${safe}" -t "video/*" 2>&1`]],
+    ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "file://${safe}" 2>&1`]],
+    ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "content://com.android.externalstorage.documents/root/primary" 2>&1`]],
+  ]
+  for (const [bin, args] of tries) {
+    try {
+      const r = await run(bin, args, { timeout: 5000, windowsHide: true })
+      const out = String((r && r.stdout) || '') + String((r && r.stderr) || '')
+      if (!/error|exception|not found|failure|denied/i.test(out)) return true
+    } catch { /* 下一个 */ }
+  }
+  return false
+}
+
 async function launchSystemBrowser(rawUrl) {
   // 只认 http/https 的本机地址，并把 shell 里危险符号全部剔除，防止被拼进命令行
   const u = String(rawUrl || '').replace(/["'$\\`|;&<>(){}\n\r]/g, '')
@@ -642,6 +703,57 @@ export function apply(ctx, _config) {
         return sendJson(res, 200, { ok: true, reply: String(r.text || '').trim().slice(0, 60), model: chain[0].label || chain[0].model })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
+    // 导出到手机可见目录（proot 里的路径用户看不到，必须复制出去）
+    if (req.method === 'POST' && path === '/export') {
+      try {
+        const b = await readBody(req)
+        const what = String(b.what || '')
+        const ext = findExternalDir()
+        if (!ext) return sendJson(res, 200, { ok: false, error: '找不到手机可写目录（这台设备可能没挂载外置存储）' })
+        if (what === 'video') {
+          const name = String(b.name || '')
+          if (!name || /[/\\]|\.\./.test(name) || !name.endsWith('.mp4')) return sendJson(res, 200, { ok: false, error: '文件名不合法' })
+          const src = join(home, '.video', name)
+          if (!existsSync(src)) return sendJson(res, 200, { ok: false, error: '这个视频已经不在本地了，重新生成一次' })
+          const dest = join(ext, name)
+          copyFileSync(src, dest)
+          await notifyMediaScanner(dest)
+          const opened = await openWithSystem(dest)
+          return sendJson(res, 200, { ok: true, dest, opened })
+        }
+        if (what === 'assets') {
+          // 把素材库整个搬到手机目录，用户就能用文件管理器往里丢文件了
+          const src = join(home, 'assets')
+          try { if (!existsSync(src)) mkdirSync(src, { recursive: true }) } catch { /* noop */ }
+          let n = 0
+          try {
+            for (const f of readdirSync(src)) {
+              try { copyFileSync(join(src, f), join(ext, f)); n++ } catch { /* 单个失败跳过 */ }
+            }
+          } catch { /* 没有素材 */ }
+          await openWithSystem(ext)
+          return sendJson(res, 200, { ok: true, dest: ext, copied: n })
+        }
+        return sendJson(res, 200, { ok: false, error: '不知道要导出什么' })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 把手机目录里的文件「导入」到插件素材库（在文件管理器放好文件后点一下）
+    if (req.method === 'POST' && path === '/import-assets') {
+      try {
+        const ext = findExternalDir()
+        if (!ext) return sendJson(res, 200, { ok: false, error: '找不到手机目录' })
+        const dst = join(home, 'assets')
+        try { if (!existsSync(dst)) mkdirSync(dst, { recursive: true }) } catch { /* noop */ }
+        let n = 0
+        for (const f of readdirSync(ext)) {
+          const lower = f.toLowerCase()
+          if (!/\.(png|jpg|jpeg|webp|gif|mp3|wav|m4a|aac|ogg)$/.test(lower)) continue
+          try { copyFileSync(join(ext, f), join(dst, f)); n++ } catch { /* 跳过 */ }
+        }
+        logLine(home, `从手机目录导入素材 ${n} 个（${ext}）`)
+        return sendJson(res, 200, { ok: true, copied: n, from: ext })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 列出已生成的视频（让用户在插件页面里直接放着看，不用先发到 B 站）
     if (req.method === 'GET' && path === '/publish/video-list') {
       try {
@@ -1098,7 +1210,7 @@ export function apply(ctx, _config) {
         const t = setInterval(() => {
           try {
             const before = processRss()
-            const r = freeMemory({ aggressive: false })
+            const r = freeMemory({ aggressive: true })
             const kb = Math.round((before - (r.after || before)) / 1024)
             if ((r.freed && (r.freed.flavorCache || r.freed.depCacheFailures)) || r.gc) {
               logLine(home, `自动省内存：清了缓存${r.gc ? '并回收了垃圾' : ''}` + (kb > 0 ? `（约省 ${kb}KB）` : ''))
