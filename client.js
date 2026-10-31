@@ -235,7 +235,14 @@ window.__ModuleLoader__.load({
     [data-bd-radio].on{border-color:var(--blue);} [data-bd-radio].on::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--blue);}
     textarea[data-bd-persona]{width:100%;min-height:420px;border:1px solid var(--line);border-radius:8px;padding:14px;font-size:12.5px;line-height:1.8;resize:vertical;background:var(--surface);color:var(--t1);}
     textarea[data-bd-persona]:focus{outline:none;border-color:var(--blue);}
-    [data-bd-chainitem]{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);}
+    [data-bd-chainitem]{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);}
+    [data-bd-chainitem] .row1{display:flex;align-items:center;gap:10px;}
+    /* 每个模型单独调思考强度：按钮做大，手机上点得准 */
+    [data-bd-strength]{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px dashed var(--line);}
+    [data-bd-strength] .lb{font-size:11.5px;color:var(--t3);}
+    [data-bd-strength] .lvlbtn{min-width:44px;min-height:32px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--canvas);color:var(--t2);font-size:12.5px;cursor:pointer;}
+    [data-bd-strength] .lvlbtn.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600;}
+    [data-bd-strength] .cur{font-size:11px;color:var(--t3);margin-left:auto;}
     [data-bd-chainitem] .idx{width:22px;height:22px;border-radius:50%;background:var(--blue-bg);color:var(--blue);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;}
     [data-bd-chainitem] .nm{font-weight:600;font-size:13px;} [data-bd-chainitem] .mdl{font-size:11px;color:var(--t3);}
     [data-bd-chainitem] .src{margin-left:auto;}
@@ -543,18 +550,32 @@ window.__ModuleLoader__.load({
         suffix ? h('span', { 'data-bd-ds': '', style: { fontSize: '12px', color: 'var(--t2)' } }, suffix) : null)
     }
 
-    const ChainList = ({ endpoints, onReorder }) => {
+    const LEVEL_LABEL = { off: '关', low: '低', medium: '中', high: '高' }
+    const ChainList = ({ endpoints, onReorder, strengthMap, onStrength }) => {
       if (!endpoints || !endpoints.length) return h('div', { 'data-bd-empty': '' }, '链上空：去「模型与密钥」加一个模型，或等 DSH 预设同步')
       return h('div', { 'data-bd-chainlist': '' }, endpoints.map((ep, i) => {
         const srcTag = ep.source === 'preset' ? Tag({ c: 'blue', children: 'DSH预设' }) : Tag({ c: 'gray', children: '自定义' })
         const arrows = h('div', { className: 'arrows' },
           h('button', { disabled: i === 0, onClick: () => onReorder(i, -1) }, '▲'),
           h('button', { disabled: i === endpoints.length - 1, onClick: () => onReorder(i, 1) }, '▼'))
+        const cur = (strengthMap || {})[ep.id] || ''
+        // 强度：手机上要好点，四个大按钮 + 明确的选中态（2026-11-1）
+        const strengthRow = h('div', { 'data-bd-strength': '' },
+          h('span', { className: 'lb' }, '思考'),
+          ['off', 'low', 'medium', 'high'].map((lv) => h('button', {
+            key: lv, 'data-bd-btn': '', 'data-bd-lvl': lv,
+            className: 'lvlbtn' + (cur === lv ? ' on' : ''),
+            title: lv === 'off' ? '不思考（最快最省）' : (lv === 'high' ? '高强度（最费，慢）' : LEVEL_LABEL[lv] + '强度'),
+            onClick: () => onStrength && onStrength(ep.id, cur === lv ? '' : lv),
+          }, LEVEL_LABEL[lv])),
+          h('span', { className: 'cur' }, cur ? ('当前：' + LEVEL_LABEL[cur]) : '跟全局'))
         return h('div', { 'data-bd-chainitem': '' },
-          h('div', { className: 'idx' }, String(i + 1)),
-          h('div', null, h('div', { className: 'nm' }, ep.label || ''), h('div', { className: 'mdl' }, ep.model || '')),
-          h('div', { className: 'src' }, srcTag),
-          arrows)
+          h('div', { className: 'row1' },
+            h('div', { className: 'idx' }, String(i + 1)),
+            h('div', null, h('div', { className: 'nm' }, ep.label || ''), h('div', { className: 'mdl' }, ep.model || '')),
+            h('div', { className: 'src' }, srcTag),
+            arrows),
+          strengthRow)
       }))
     }
 
@@ -726,6 +747,17 @@ window.__ModuleLoader__.load({
           if (!r || !r.ok) return toast_('导出失败：' + ((r && r.error) || ''))
           toast_('已导出到：' + r.dest + (r.opened ? '（已用系统播放器打开）' : ''))
         } catch (e) { toast_('导出失败：' + String(e?.message ?? e)) }
+      }
+      /** 给某个模型单独设思考强度（'' 表示跟全局） */
+      const setChainStrength = async (epId, lv) => {
+        try {
+          const cur = { ...((state && state.settings && state.settings.chainStrength) || {}) }
+          if (lv) cur[epId] = lv
+          else delete cur[epId]
+          const r = await jpost('/settings', { chainStrength: cur })
+          if (!r || !r.ok) return toast_('保存思考强度失败：' + ((r && r.error) || ''))
+          toast_(lv ? ('已设为「' + lv + '」') : '已改回跟随全局')
+        } catch (e) { toast_('保存失败：' + String(e?.message ?? e)) }
       }
       /** 内存状况 + 手动释放（运行内存，不是磁盘空间） */
       /** 一键套用音色预设：四个参数一起设好，然后立刻试听 */
@@ -1460,7 +1492,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 't' }, '模型与密钥'),
             h('span', { className: 's' }, '一个 API key 下挂多个模型；点模型名就能进出降级链')),
           Card({ title: '降级链（模型排队）', sub: '越靠上越先用，出问题往下切' },
-            ChainList({ endpoints: chainDraft || [], onReorder: (i, d) => { const arr = (chainDraft || []).slice(); const j = i + d; if (j < 0 || j >= arr.length) return; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; setChainDraft(arr) } }),
+            ChainList({ endpoints: chainDraft || [], strengthMap: cfg.chainStrength || {}, onStrength: setChainStrength, onReorder: (i, d) => { const arr = (chainDraft || []).slice(); const j = i + d; if (j < 0 || j >= arr.length) return; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; setChainDraft(arr) } }),
             h('div', { style: { display: 'flex', gap: '10px', marginTop: '12px', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveChainOrder }, '保存顺序'))),
           presetCard,
@@ -1561,7 +1593,7 @@ window.__ModuleLoader__.load({
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '降级链'), h('span', { className: 's' }, '越靠上越先用：没钱 / 没资源包 / 适配器没注册，自动往下切')),
           Card({ title: '模型排队', sub: '↑↓ 调顺序 · 点模型名去「模型与密钥」里加减' },
-            ChainList({ endpoints: ep, onReorder: (i, d) => { const arr = ep.slice(); const j = i + d; if (j < 0 || j >= arr.length) return; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; setChainDraft(arr) } }),
+            ChainList({ endpoints: ep, strengthMap: cfg.chainStrength || {}, onStrength: setChainStrength, onReorder: (i, d) => { const arr = ep.slice(); const j = i + d; if (j < 0 || j >= arr.length) return; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; setChainDraft(arr) } }),
             h('div', { style: { display: 'flex', gap: '10px', marginTop: '12px', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveChainOrder }, '保存顺序'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => setPage('models') }, '去模型与密钥 ←'))))
