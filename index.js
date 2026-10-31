@@ -35,7 +35,7 @@ import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts } from './lib/retract.mjs'
-import { asrStatus, asrReadiness } from './lib/asr.mjs'
+import { asrStatus, asrReadiness, asrDiag } from './lib/asr.mjs'
 import { visionReady } from './lib/vision.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
@@ -606,6 +606,15 @@ export function apply(ctx, _config) {
     }
     if (req.method === 'GET' && path === '/env/job') {
       return sendJson(res, 200, { ok: true, ...envJobSnapshot() })
+    }
+    // 转写自检：真 import 一次，告诉用户装了什么版本、能不能用
+    if (req.method === 'GET' && path === '/env/asr-check') {
+      try {
+        const c = loadConfig(home)
+        const py = resolvePython(c, home)
+        const d = await asrDiag(py)
+        return sendJson(res, 200, { ok: true, python: py, ...d })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message ?? e) }) }
     }
     if (req.method === 'GET' && path === '/env/diag') {
       try { return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
