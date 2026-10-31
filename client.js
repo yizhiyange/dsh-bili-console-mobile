@@ -203,6 +203,18 @@ window.__ModuleLoader__.load({
     [data-bd-field] label{font-size:12px;color:var(--t2);} [data-bd-field] .hint{font-size:11px;color:var(--t2);}
     [data-bd-formgrid]{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;}
     [data-bd-page].narrow [data-bd-formgrid]{grid-template-columns:1fr;}
+    /* 窄屏排版（2026-10-31）：目标是【永远不出横向滚动条】——
+       标签/说明占一整行，控件换到下一行；超宽的内容一律折行，绝不给你一条又细又难滑的横条 */
+    [data-bd-page].narrow [data-bd-content]{overflow-x:hidden;}
+    [data-bd-page].narrow [data-bd-setrow]{flex-wrap:wrap;row-gap:8px;}
+    [data-bd-page].narrow [data-bd-setrow]>[data-bd-txt]{flex:1 1 100%;}
+    [data-bd-page].narrow [data-bd-setrow]>*{min-width:0;max-width:100%;}
+    [data-bd-page].narrow [data-bd-setrow]>[data-bd-input],
+    [data-bd-page].narrow [data-bd-setrow]>select,
+    [data-bd-page].narrow [data-bd-setrow]>[data-bd-numin]{flex:1 1 100%;}
+    [data-bd-page].narrow textarea{max-width:100%;}
+    [data-bd-page].narrow [data-bd-chips]{flex-wrap:wrap;}
+    [data-bd-page].narrow [data-bd-rep] pre,[data-bd-page].narrow [data-bd-logbox]{overflow-x:auto;}
     [data-bd-errpage]{padding:16px 0;}
     [data-bd-radio]{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--off);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;}
     [data-bd-radio].on{border-color:var(--blue);} [data-bd-radio].on::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--blue);}
@@ -1381,6 +1393,9 @@ window.__ModuleLoader__.load({
         blocks.push(h('div', { 'data-bd-pagetitle': '' },
           h('span', { className: 't' }, '设置'),
           h('span', { className: 's' }, '每一项都能改、都能存；改完即时生效并同步到 DSH')))
+        if (narrow) blocks.splice(1, 0, h('div', { 'data-bd-banner': '' },
+          h('span', null, '这个面板被 DSH 挤得比较窄。想看得舒服，点右边在浏览器里全宽打开'),
+          h('button', { onClick: openConsole }, '全宽打开')))
 
         /* 安装任务的进度视图：进度条 + 当前阶段 + 最近日志（只显示指定 kind 的） */
         const ej = st.envJob || {}
