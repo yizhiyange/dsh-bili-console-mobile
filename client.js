@@ -1891,6 +1891,22 @@ window.__ModuleLoader__.load({
             toast_(r && r.ok ? '投稿已提交（B站还要审核）' : ('投稿失败：' + ((r && (r.error || r.message)) || '未知')))
           } catch (e) { toast_('投稿失败：' + String(e?.message ?? e)) }
         }
+        /** 配音试听：拿当前声线/语速/音调/音量念一句，直接播 */
+        const doTtsPreview = async () => {
+          try {
+            const msg = document.querySelector('[data-bd-ttsmsg]')
+            const btn = document.querySelector('[data-bd-ttsbtn]')
+            if (msg) msg.textContent = '正在合成…'
+            if (btn) btn.disabled = true
+            const r = await jpost('/publish/tts-preview', {})
+            if (btn) btn.disabled = false
+            if (!r || !r.ok) { if (msg) msg.textContent = '试听失败：' + ((r && r.error) || '未知原因'); return }
+            const aud = new Audio('data:audio/mpeg;base64,' + r.audio)
+            if (msg) msg.textContent = '播放中（' + Math.round((r.size || 0) / 1024) + 'KB）'
+            aud.onended = () => { if (msg) msg.textContent = '听完了，不满意就改上面的参数' }
+            await aud.play().catch(() => { if (msg) msg.textContent = '浏览器不让自动播放，点一下再试试' })
+          } catch (e) { toast_('试听失败：' + String(e?.message ?? e)) }
+        }
         /** 一键生成：AI 写文案 → 本地渲染 → 自动把路径填进下面的投稿表单 */
         const startGen = async () => {
           try {
@@ -2005,6 +2021,33 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'zh-CN-liaoning-XiaobeiNeural' }, '晓北（东北口音女声）'),
                 h('option', { value: 'zh-CN-shaanxi-XiaoniNeural' }, '小妮（陕西口音女声）'),
                 h('option', { value: 'zh-CN-YunxiaNeural' }, '云夏（少年男声）'))),
+            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '语速'), h('div', { 'data-bd-ds': '' }, '微软原生支持，百分比如 -20%（慢）/ +20%（快）')),
+              Select({ value: cfg.videoVoiceRate || '+0%', onChange: (v) => saveOne('videoVoiceRate', v), minWidth: 110 },
+                h('option', { value: '-30%' }, '-30% 很慢'),
+                h('option', { value: '-15%' }, '-15% 稍慢'),
+                h('option', { value: '+0%' }, '正常'),
+                h('option', { value: '+15%' }, '+15% 稍快'),
+                h('option', { value: '+30%' }, '+30% 很快'))),
+            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '音调'), h('div', { 'data-bd-ds': '' }, '负值更低沉，正值更清亮/稚嫩')),
+              Select({ value: cfg.videoVoicePitch || '+0Hz', onChange: (v) => saveOne('videoVoicePitch', v), minWidth: 110 },
+                h('option', { value: '-30Hz' }, '-30Hz 低沉'),
+                h('option', { value: '-15Hz' }, '-15Hz 稍低'),
+                h('option', { value: '+0Hz' }, '正常'),
+                h('option', { value: '+15Hz' }, '+15Hz 稍高'),
+                h('option', { value: '+30Hz' }, '+30Hz 清亮'))),
+            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '音量'), h('div', { 'data-bd-ds': '' }, '配音音量，和视频画面的音量平衡')),
+              Select({ value: cfg.videoVoiceVolume || '+0%', onChange: (v) => saveOne('videoVoiceVolume', v), minWidth: 110 },
+                h('option', { value: '-20%' }, '-20% 小声'),
+                h('option', { value: '+0%' }, '正常'),
+                h('option', { value: '+20%' }, '+20% 大声'))),
+            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '', 'data-bd-ttsrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '试听一下'), h('div', { 'data-bd-ds': '' }, '用上面这套配置念一句，听完再生成，省得白等')),
+              h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', 'data-bd-ttsbtn': '', onClick: doTtsPreview }, '▶ 试听'),
+                h('span', { 'data-bd-ttsmsg': '', style: { fontSize: '11.5px', color: 'var(--t2)' } }, ''))),
             ToggleRow({ label: '用 AI 写稿', note: '关掉 = 用当天刷到的标题拼合集，不需要任何模型 / key', on: cfg.videoUseAI !== false, onChange: (v) => saveOne('videoUseAI', v) }),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '清晰度'), h('div', { 'data-bd-ds': '' }, '默认 720p；1080p 更清楚但更慢；480p 只建议极端省电（会糊）')),
