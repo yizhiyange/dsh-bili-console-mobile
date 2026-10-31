@@ -1181,6 +1181,8 @@ img.avatar{border:1px solid var(--line);}
   $('#login-close').addEventListener('click', function () { clearInterval(loginTimer); $('#login').classList.remove('show'); });
 
   function refresh() {
+    // 省电：页面在后台（锁屏 / 切 App）就别打了，手机浏览器这块最费电（2026-11-1）
+    if (document.hidden) return Promise.resolve();
     return get('/state').then(function (s) {
       S.state = s;
       paint();
@@ -1205,7 +1207,10 @@ img.avatar{border:1px solid var(--line);}
   var wantPage = qs0.get('p') || (location.hash || '').replace('#', '');
   goto(RENDER[wantPage] ? wantPage : 'overview');
   refresh();
-  setInterval(refresh, 3000);
+  // 轮询频率：省电模式或安卓/手机上放慢到 8 秒；切回前台立刻补一次
+  var pollMs = ((cfg().lowPower) || /android/i.test(navigator.userAgent || '')) ? 8000 : 3000;
+  setInterval(refresh, pollMs);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
 })();
 </script>
 </body>
