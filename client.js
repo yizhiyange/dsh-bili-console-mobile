@@ -823,6 +823,26 @@ window.__ModuleLoader__.load({
           try { loadAssets() } catch { /* 列表稍后刷新 */ }
         } catch (e) { toast_('导入失败：' + String(e?.message ?? e)) }
       }
+      /** 删掉一个生成的视频（手机存储紧张时用） */
+      const deleteVideo = async (name) => {
+        try {
+          if (!window.confirm('删掉这个视频？' + name + '\n（只删本地文件，已发到 B 站的不受影响）')) return
+          const r = await jpost('/video/delete', { name })
+          if (!r || !r.ok) return toast_('删除失败：' + ((r && r.error) || ''))
+          toast_('已删除，腾出 ' + (Math.round((r.freed || 0) / 1048576 * 10) / 10) + 'MB')
+          loadVideoList()
+        } catch (e) { toast_('删除失败：' + String(e?.message ?? e)) }
+      }
+      /** 清空所有生成的视频 */
+      const clearVideos = async () => {
+        try {
+          if (!window.confirm('把所有已生成的视频都删掉？（素材库不受影响）')) return
+          const r = await jpost('/video/clear', {})
+          if (!r || !r.ok) return toast_('清理失败：' + ((r && r.error) || ''))
+          toast_('删了 ' + (r.deleted || 0) + ' 个，腾出 ' + Math.round((r.freed || 0) / 1048576) + 'MB')
+          loadVideoList()
+        } catch (e) { toast_('清理失败：' + String(e?.message ?? e)) }
+      }
       /** 把某个视频导出到手机（并尝试用系统播放器打开） */
       const exportVideo = async (name) => {
         try {
@@ -940,6 +960,12 @@ window.__ModuleLoader__.load({
               exp.textContent = '📤 导出到手机并播放'
               exp.onclick = () => exportVideo(f.name)
               bar.appendChild(exp)
+              const del = document.createElement('button')
+              del.className = 'ghost sm'
+              del.textContent = '🗑 删除'
+              del.style.color = 'var(--red, #e35d6a)'
+              del.onclick = () => deleteVideo(f.name)
+              bar.appendChild(del)
               wrap.appendChild(title); wrap.appendChild(v); wrap.appendChild(bar)
               box.appendChild(wrap)
           }
@@ -2352,6 +2378,9 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', 'data-bd-ttsbtn': '', onClick: doTtsPreview }, '▶ 试听'),
                 h('span', { 'data-bd-ttsmsg': '', style: { fontSize: '11.5px', color: 'var(--t2)' } }, ''))),
+            h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap' } },
+              h('span', { 'data-bd-ds': '', style: { fontSize: '12px' } }, '已生成的视频（占手机空间，看过的可以删）'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: clearVideos }, '🧹 全部清空')),
             h('div', { 'data-bd-vidlist': '', style: { marginTop: '6px' } }, ''),
             ToggleRow({ label: '用 AI 写稿', note: '关掉 = 用当天刷到的标题拼合集，不需要任何模型 / key', on: cfg.videoUseAI !== false, onChange: (v) => saveOne('videoUseAI', v) }),
             h('div', { 'data-bd-setrow': '' },
