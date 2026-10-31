@@ -807,6 +807,14 @@ window.__ModuleLoader__.load({
           else toast_('还是没找到 Python，下面列出了试过的每个路径')
         } catch (e) { toast_('检测失败：' + String(e?.message ?? e)) } finally { setEnvBusy(false) }
       }
+      /** 一键安装运行环境：auto=Python+依赖 / deps=只装依赖 / asr=转写后端 */
+      const installEnv = async (what) => {
+        try {
+          const r = await jpost('/env/install', { what })
+          if (r && r.ok && !r.error) toast_(what === 'asr' ? '开始装转写后端，进度在卡片里' : '开始安装，进度在卡片里（别退出这一页）')
+          else toast_('没启动成：' + ((r && r.error) || '未知原因'))
+        } catch (e) { toast_('启动失败：' + String(e?.message ?? e)) }
+      }
       const runNow = async () => { try { const r = await jpost('/run/now', { force: true }); toast_(r.message || (r.ok ? '已开始' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
       /** 清空所有视频的对话上下文（thread 模式产物） */
       const clearMemory = async () => {
@@ -1215,6 +1223,26 @@ window.__ModuleLoader__.load({
           h('span', { className: 't' }, '设置'),
           h('span', { className: 's' }, '每一项都能改、都能存；改完即时生效并同步到 DSH')))
 
+        /* 安装任务的进度视图：进度条 + 当前阶段 + 最近日志（只显示指定 kind 的） */
+        const ej = st.envJob || {}
+        const envRunning = Boolean(ej.running && ['auto', 'deps', 'python'].includes(ej.kind))
+        const asrRunning = Boolean(ej.running && ej.kind === 'asr')
+        const envJobView = (kinds) => {
+          if (!ej.phase || ej.phase === 'idle' || !kinds.includes(ej.kind)) return null
+          const bad = Boolean(ej.error)
+          const tint = bad ? 'var(--red-tx)' : (ej.done ? 'var(--green-tx)' : undefined)
+          return h('div', { 'data-bd-envjob': '', style: { marginTop: '12px' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+              h('div', { 'data-bd-upbar': '' }, h('i', { style: { width: (ej.pct || 0) + '%', background: tint } })),
+              h('span', { 'data-bd-ds': '', style: { whiteSpace: 'nowrap', fontWeight: 600 } }, (ej.pct || 0) + '%')),
+            h('div', { 'data-bd-ds': '', style: { marginTop: '6px', color: bad ? 'var(--red-tx)' : (ej.done ? 'var(--green-tx)' : 'var(--t2)') } },
+              bad ? ('✖ ' + ej.error) : (ej.done ? '✔ 装好了（重启 DSH 后状态会刷新）' : ej.phase)),
+            (ej.log || []).length ? h('div', {
+              'data-bd-envlog': '',
+              style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '170px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' },
+            }, ej.log.join('\n')) : null)
+        }
+
         /* 监听关键词 */
         blocks.push(Card({ title: '监听关键词', sub: '回车添加，点 × 移除' },
           kwChips,
@@ -1254,9 +1282,18 @@ window.__ModuleLoader__.load({
               label: '本地转写',
               note: asr.ready
                 ? ('没字幕时会下载音频，用本机 ' + (asr.backend || '转写后端') + ' 转成文字再看内容；慢几十秒，不花云端额度')
-                : ('这是可选功能，没装不影响挑视频和评论。没字幕的视频会直接跳过。想开的话，在终端跑：pip install faster-whisper（并确保 ffmpeg 可用）' + (asr.reason ? '；当前：' + asr.reason : '')),
+                : ('这是可选功能，没装不影响挑视频和评论' + (asr.reason ? '（' + asr.reason + '）' : '')),
               on: !!cfg.transcribe, onChange: (v) => saveOne('transcribe', v),
             }),
+            asr.ready ? null : h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '10px' } },
+              h('button', {
+                'data-bd-btn': '', className: 'primary sm', disabled: asrRunning,
+                onClick: () => installEnv('asr'),
+              }, asrRunning ? '安装中…' : '一键安装转写后端'),
+              h('span', { 'data-bd-ds': '', style: { fontSize: '12px', color: 'var(--t2)' } }, '约 200MB，装完首次转写还要下模型')),
+            asr.ready ? null : h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
+              '不想装也不影响用：没字幕的视频会退而用「标题 + 简介 + 封面识图」来判断——效果差点，但不用装任何东西、也不用额外花钱。'),
+            envJobView(['asr']),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '转写模型'), h('div', { 'data-bd-ds': '' }, 'small 最快、large 最准也最慢')),
               Select({ value: cfg.asrModel || 'small', onChange: (v) => saveOne('asrModel', v), minWidth: 130 },
@@ -1371,10 +1408,16 @@ window.__ModuleLoader__.load({
           },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'Python 依赖'), h('div', { 'data-bd-ds': '' }, desc)),
-              h('button', {
-                'data-bd-btn': '', className: 'ghost sm', disabled: envBusy,
-                onClick: recheckEnv,
-              }, envBusy ? '检测中…' : '重新检测')),
+              h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+                ready ? null : h('button', {
+                  'data-bd-btn': '', className: 'primary sm', disabled: envRunning,
+                  onClick: () => installEnv('auto'),
+                }, envRunning ? '安装中…' : (v.basePython ? '一键安装依赖' : '一键装好（含 Python）')),
+                h('button', {
+                  'data-bd-btn': '', className: 'ghost sm', disabled: envBusy,
+                  onClick: recheckEnv,
+                }, envBusy ? '检测中…' : '重新检测'))),
+            envJobView(['auto', 'deps', 'python']),
             envDiag ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
               h('div', null, '平台 ' + (envDiag.platform || '?') + '　找到：' + (envDiag.found ? (envDiag.found.cmd + '（' + envDiag.found.ver + '）') : '没有任何可用的 Python')),
               (envDiag.tried || []).length ? h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7 } },
