@@ -762,6 +762,20 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 换版式后立刻渲染一张预览图（走真实渲染器，所见即所得） */
+      const showLayoutPreview = (style) => {
+        try {
+          const box = document.querySelector('[data-bd-layoutpv]')
+          if (!box) return
+          const st = style == null ? ((state && state.settings && state.settings.videoLayout) || 'auto') : style
+          box.innerHTML = '<div style="font-size:12px;color:var(--t3)">正在渲染预览…</div>'
+          const img = document.createElement('img')
+          img.src = API + '/video/preview?style=' + encodeURIComponent(st) + '&t=' + Date.now()
+          img.style.cssText = 'width:100%;max-width:520px;border-radius:10px;border:1px solid var(--line);margin-top:6px'
+          img.onload = () => { box.innerHTML = ''; box.appendChild(img) }
+          img.onerror = () => { box.innerHTML = '<div style="font-size:12px;color:var(--t3)">预览渲染失败了（可能渲染组件还没装好）</div>' }
+        } catch { /* 忽略 */ }
+      }
       /** 让 AI 看图给素材写备注（懒得打字就用这个） */
       const autoNoteAssets = async () => {
         try {
@@ -2269,6 +2283,18 @@ window.__ModuleLoader__.load({
           Card({ title: '视频生成设置', sub: '独立配置，和发评论的分开' },
             ToggleRow({ label: '配音（需联网）', note: '用微软 edge-tts 免费合成旁白（就是你要的「A 级 TTS」）；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '配音引擎'),
+                h('div', { 'data-bd-ds': '' }, '内置=微软免费声线（零下载，装了就能用）；外部=接你自己跑的开源 TTS（能出声线包/大肥鱼这类）。插件**不打包模型**，因为一个声线包就几百 MB~几 G，会让所有人下载都变慢')),
+              Select({ value: cfg.videoTtsEngine || 'edge', onChange: (v) => saveOne('videoTtsEngine', v), minWidth: 160 },
+                h('option', { value: 'edge' }, '内置 微软（免下载）'),
+                h('option', { value: 'http' }, '外部 TTS 服务'))),
+            (cfg.videoVoice !== false) && (cfg.videoTtsEngine === 'http') && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '外部 TTS 地址'),
+                h('div', { 'data-bd-ds': '' }, '填服务地址（POST {"text":...} 返回音频）。常见开源：GPT-SoVITS、ChatTTS、vits-simple-api。去 GitHub 搜名字就能下到，自己跑起来再把地址填这里')),
+              h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+                Input({ defaultValue: cfg.videoTtsUrl || '', placeholder: 'http://127.0.0.1:9880/tts', onBlur: (e) => saveOne('videoTtsUrl', String(e.target.value || '').trim(), 'TTS 地址') }),
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { const inp = document.querySelector('[data-bd-ttsUrl] input'); toast_('地址填好后点「试听」验证') } }, '提示'))),
+            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '配音声线'), h('div', { 'data-bd-ds': '' }, '都是微软 edge-tts 的音色，免费；云希=年轻男声、晓晓=标准女声、云野=沉稳男声、晓伊=温柔女声、云夏=少年男声')),
               Select({ value: cfg.videoVoiceName || 'zh-CN-XiaoxiaoNeural', onChange: (v) => saveOne('videoVoiceName', v), minWidth: 170 },
                 h('option', { value: 'zh-CN-XiaoxiaoNeural' }, '晓晓（标准女声）'),
@@ -2318,6 +2344,21 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '视频卡片数（画面张数）'), h('div', { 'data-bd-ds': '' }, '指视频里翻页的文字画面有几张（就是 PPT 页数），不是人格卡；人格卡在「人设」页配置，这里会自动沿用。越多视频越长；手机建议 4 张')),
               Stepper({ value: (cfg.videoMaxCards || 6) + ' 张', onStep: (d) => step('videoMaxCards', d, ' 张') })),
             h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '画面版式'),
+                h('div', { 'data-bd-ds': '' }, '自动=5 种版式依次轮换（不呆板）；也可以固定一种。点「看预览」立刻渲染一张给你看')),
+              h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                Select({ value: cfg.videoLayout || 'auto', onChange: (v) => { saveOne('videoLayout', v); setTimeout(() => showLayoutPreview(v), 350) }, minWidth: 150 },
+                  h('option', { value: 'auto' }, '自动轮换（推荐）'),
+                  h('option', { value: '0' }, '居中大标题'),
+                  h('option', { value: '1' }, '大编号左对齐'),
+                  h('option', { value: '2' }, '金句居中'),
+                  h('option', { value: '3' }, '标题+列表'),
+                  h('option', { value: '4' }, '简洁居中')),
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => showLayoutPreview(null) }, '看预览'))),
+            h('div', { 'data-bd-setrow': '', style: { display: 'block' } },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '版式预览')),
+              h('div', { 'data-bd-layoutpv': '' }, h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '点上面的「看预览」')))
+            , h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '思考强度'),
                 h('div', { 'data-bd-ds': '' }, '模型自带的推理强度。关=最快最省（默认）；高强度更会"想"，适合写长文案，但慢很多、更费 token。写稿时传给模型的是 reasoning_effort，模型不认会自动退回普通模式')),
               Select({ value: cfg.thinkLevel || 'off', onChange: (v) => saveOne('thinkLevel', v), minWidth: 130 },
