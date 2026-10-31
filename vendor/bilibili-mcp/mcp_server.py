@@ -26,7 +26,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from bilibili_api import video, search, comment, Credential, dynamic, opus
-from bilibili_api import hot, rank, user, session, favorite_list
+from bilibili_api import hot, rank, user, session, favorite_list, homepage
 from bilibili_api.video_uploader import (
     VideoUploader, VideoUploaderPage, VideoMeta, Lines,
 )
@@ -1592,6 +1592,89 @@ async def bili_received_at_and_likes() -> str:
     except Exception as e:
         result["likes_error"] = str(e)
     return json.dumps(result, ensure_ascii=False)
+
+
+# ========== Tool: 首页个性化推荐流 ==========
+# 为什么加它（2026-10-31）：关键词搜索永远在同一个池子里捞，刷久了只剩旧视频；
+# 首页推荐是 B站 按当前登录账号的口味实时推的 —— 天然新鲜、天然相关，是"活水"。
+@tool()
+async def bili_home_feed(num: int = 20) -> str:
+    """
+    获取首页个性化推荐视频（B站按当前登录账号的口味推的）
+
+    Args:
+        num: 返回数量，默认20，最大50
+    """
+    cred = get_cred()
+    try:
+        data = await homepage.get_videos(credential=cred)
+        items = []
+        if isinstance(data, dict):
+            items = data.get("item") or ((data.get("data") or {}).get("item")) or []
+        videos = []
+        for item in items[:max(1, min(int(num), 50))]:
+            if not isinstance(item, dict):
+                continue
+            stat = item.get("stat") or {}
+            owner = item.get("owner") or {}
+            title = (item.get("title") or "").replace('<em class="keyword">', "").replace("</em>", "")
+            bvid = item.get("bvid") or ""
+            if not bvid:
+                continue
+            videos.append({
+                "bvid": bvid,
+                "title": title,
+                "author": owner.get("name", ""),
+                "play": stat.get("view", 0),
+                "like": stat.get("like", 0),
+                "reply": stat.get("reply", 0),
+                "danmaku": stat.get("danmaku", 0),
+                "duration": item.get("duration", 0),
+                "desc": (item.get("desc") or "")[:100],
+                "tname": item.get("tname", ""),
+            })
+        return json.dumps({"count": len(videos), "videos": videos}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+
+# ========== Tool: 点赞 / 投币 ==========
+
+@tool()
+async def bili_like(bvid: str, status: int = 1) -> str:
+    """
+    给视频点赞（或取消点赞）
+
+    Args:
+        bvid: 视频BV号
+        status: 1=点赞，0=取消点赞
+    """
+    cred = get_cred()
+    try:
+        v = video.Video(bvid=bvid, credential=cred)
+        result = await v.like(status=bool(status))
+        return json.dumps({"success": True, "result": result}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+
+@tool()
+async def bili_coin(bvid: str, num: int = 1, like_also: int = 0) -> str:
+    """
+    给视频投币（会消耗自己账号的硬币）
+
+    Args:
+        bvid: 视频BV号
+        num: 投几个币（1 或 2），默认 1
+        like_also: 1=同时点赞，0=只投币
+    """
+    cred = get_cred()
+    try:
+        v = video.Video(bvid=bvid, credential=cred)
+        result = await v.pay_coin(num=max(1, min(int(num), 2)), like=bool(like_also))
+        return json.dumps({"success": True, "result": result}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
 
 # ========== 启动 ==========
