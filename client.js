@@ -762,6 +762,16 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 测一下识图模型能不能真看图（素材库里的 AI 写备注要用它） */
+      const testVision = async () => {
+        try {
+          toast_('正在让识图模型看一眼测试图…')
+          const r = await jpost('/vision/test', {})
+          if (!r || !r.ok) return toast_('✗ ' + ((r && r.error) || '连不上'))
+          toast_('✓ 能看图，模型回：' + (r.reply || ''))
+          loadAssets()
+        } catch (e) { toast_('✗ ' + String(e?.message ?? e)) }
+      }
       /** 换版式后立刻渲染一张预览图（走真实渲染器，所见即所得） */
       const showLayoutPreview = (style) => {
         try {
@@ -2413,6 +2423,21 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: importAssets }, '📥 从手机导入'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开插件内目录'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadAssets }, '刷新列表')),
+            h('div', { 'data-bd-setrow': '', style: { display: 'block' } },
+              h('div', { 'data-bd-txt': '' },
+                h('div', { 'data-bd-lb': '' }, '识图模型（「AI 写备注」要用它）'),
+                h('div', { 'data-bd-ds': '' }, (st.vision || {}).hasKey
+                  ? ('已经配了：' + ((st.vision || {}).model || (cfg.visionModel || {}).modelName || '—') + '（key ' + ((st.vision || {}).keyHint || '已存') + '）。想换就改下面的地址/模型/Key 再保存')
+                  : '还没配全。填一个能看图的模型（OpenAI 兼容的 vision 接口都行，比如 glm-4v-flash 这类有免费额度的）')),
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' } },
+                Input({ defaultValue: (cfg.visionModel || {}).apiUrl || '', placeholder: '接口地址，如 https://open.bigmodel.cn/api/paas/v4', key: 'vu' + ((cfg.visionModel || {}).apiUrl || ''), onBlur: (e) => setVUrl(String(e.target.value || '').trim()) }),
+                Input({ defaultValue: (cfg.visionModel || {}).modelName || '', placeholder: '模型名，如 glm-4v-flash', key: 'vm' + ((cfg.visionModel || {}).modelName || ''), onBlur: (e) => setVModel(String(e.target.value || '').trim()) }),
+                Input({ defaultValue: '', type: 'password', key: 'vk' + ((st.vision || {}).keyHint || ''), placeholder: (st.vision || {}).hasKey ? ('已存 ' + ((st.vision || {}).keyHint || '••••') + '，留空不改') : 'API Key', onBlur: (e) => setVKey(String(e.target.value || '').trim()) })),
+              h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+                h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: () => saveVision({ apiUrl: String(vUrl || (cfg.visionModel || {}).apiUrl || '').trim(), modelName: String(vModel || (cfg.visionModel || {}).modelName || '').trim(), apiKey: String(vKey || '').trim() || ((cfg.visionModel || {}).apiKey || '') }) }, '💾 保存识图模型'),
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: testVision }, '🔍 测一下能不能看图'),
+                h('span', { 'data-bd-ds': '' }, '配好后点上面的「🤖 AI 帮我写备注」'))),
+
             h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
           Card({ title: '画面生成模型（可选，进阶）', sub: '用文生图接口给每张卡片画背景图；不填就用纯色卡片' },
             ToggleRow({ label: '启用画面生成', note: '开了才联网调文生图接口，每张卡片生成一张背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', on: !!cfg.videoImageEnabled, onChange: (v) => saveOne('videoImageEnabled', v) }),
