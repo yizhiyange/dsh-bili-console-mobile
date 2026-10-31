@@ -793,6 +793,28 @@ window.__ModuleLoader__.load({
           setWebUrl(url); setWebOpen(true)
         } catch { toast_('打开失败，请手动在浏览器打开 /bili-console') }
       }
+      /** 打开评论所在的视频：手机先试 B站 App（没装自动落网页版），电脑直接系统浏览器进网页版 */
+      const openVideo = async (bvid) => {
+        const web = 'https://www.bilibili.com/video/' + bvid
+        try {
+          const r = await jpost('/open', { what: 'url', u: web })
+          if (r && r.platform === 'win32') { toast_('已在系统浏览器打开视频'); return }
+          const isAndroid = /android/i.test(navigator.userAgent || '')
+          if (!isAndroid) { toast_('已请系统打开视频'); return }
+          if (r && r.launched) { toast_('已用浏览器打开视频'); return }
+          // 手机：先试 B站 App 的 deep link（scheme=bilibili），带网页兜底；1.4 秒没切走再走网页 intent
+          try {
+            const a = document.createElement('a')
+            a.href = 'intent://video/' + bvid + '#Intent;scheme=bilibili;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=' + encodeURIComponent(web) + ';end'
+            a.target = '_blank'; a.rel = 'noopener'
+            a.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden'
+            document.body.appendChild(a); a.click(); setTimeout(() => { try { a.remove() } catch {} }, 1000)
+          } catch { /* noop */ }
+          if (await waitedForLeave(1400)) { toast_('已用哔哩哔哩打开'); return }
+          if (launchMobileIntent(web) && await waitedForLeave(1400)) { toast_('已用浏览器打开视频'); return }
+          setWebUrl(web); setWebOpen(true)
+        } catch { toast_('打不开，手动访问 bilibili.com/video/' + bvid) }
+      }
       const openFolder = async (what) => {
         try { const r = await jpost('/open', { what }); toast_(r && r.ok ? ('已请系统打开：' + (r.opened || '')) : ('打不开：' + ((r && r.error) || ''))) }
         catch (e) { toast_('打不开：' + String(e?.message ?? e)) }
@@ -1040,13 +1062,15 @@ window.__ModuleLoader__.load({
               h('div', { className: 't' }, (it.kind === 'reply' ? '回复' : '评论') + ' · ' + String(it.title || it.bvid || '').slice(0, 30)),
               h('div', { className: 'x' }, String(it.text || '')),
               h('div', { className: 'm' },
-                h('span', null, fmtT(it.at) + ' · ' + it.bvid),
-                confirmRpid === Number(it.rpid)
-                  ? h('span', { style: { display: 'flex', gap: '6px' } },
-                      h('button', { 'data-bd-btn': '', className: 'sm', style: { color: 'var(--red-tx)', fontWeight: 600 }, disabled: !!commentsBusy, onClick: () => delComment(Number(it.rpid)) }, '确认删除'),
-                      h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => setConfirmRpid(0) }, '算了'))
-                  : h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: !!commentsBusy, onClick: () => setConfirmRpid(Number(it.rpid)) },
-                      commentsBusy === Number(it.rpid) ? '删除中…' : '撤回这条'))))
+                h('span', null, fmtT(it.at)),
+                h('span', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+                  h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => openVideo(it.bvid) }, '看视频 ↗'),
+                  ...(confirmRpid === Number(it.rpid)
+                    ? [
+                        h('button', { key: 'y', 'data-bd-btn': '', className: 'sm', style: { color: 'var(--red-tx)', fontWeight: 600 }, disabled: !!commentsBusy, onClick: () => delComment(Number(it.rpid)) }, '确认删除'),
+                        h('button', { key: 'n', 'data-bd-btn': '', className: 'ghost sm', onClick: () => setConfirmRpid(0) }, '算了'),
+                      ]
+                    : [h('button', { key: 'r', 'data-bd-btn': '', className: 'ghost sm', disabled: !!commentsBusy, onClick: () => setConfirmRpid(Number(it.rpid)) }, commentsBusy === Number(it.rpid) ? '删除中…' : '撤回这条')])))))
               : h('div', { 'data-bd-empty': '' }, '还没有记录——跑一轮并且真的发出评论/回复后，这里就有了。')))
       }
 
