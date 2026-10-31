@@ -234,6 +234,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="persona">人设</button>
       <button class="pill" data-page="chain">降级链</button>
       <button class="pill" data-page="safety">安全防护</button>
+      <button class="pill" data-page="publish">发布</button>
       <button class="pill" data-page="settings">设置</button>
       <div class="side-spacer"></div>
       <div class="mode-card">
@@ -249,6 +250,7 @@ img.avatar{border:1px solid var(--line);}
       <section class="page" id="page-persona"></section>
       <section class="page" id="page-chain"></section>
       <section class="page" id="page-safety"></section>
+      <section class="page" id="page-publish"></section>
       <section class="page" id="page-settings"></section>
     </div>
   </div>
@@ -723,9 +725,63 @@ img.avatar{border:1px solid var(--line);}
     return kwCard + comment + pick + dm + rep + visionCard + memCard + env + adv + saveCard;
   }
 
+  // ============ 发布页（2026-10-31 新增：动态你自己写、视频点启动才发） ============
+  function renderPublish() {
+    var login = S.login || {};
+    var me = S.me || {};
+    var loginTag = login.loggedIn
+      ? '<span class="tag green">已登录：' + esc(me.uname || '') + '</span>'
+      : '<span class="tag amber">未登录（先去登录页扫码）</span>';
+
+    // --- 动态卡片：纯手动，AI 不代写 ---
+    var dynText = S.dynText || '';
+    var dynCard = card('发动态（纯手动）', loginTag,
+      '<div class="sum-text" style="margin-bottom:10px">动态文字由你自己写，AI 不代写、不自动发。写完点"发布动态"才发。</div>' +
+      '<textarea id="dyn-input" rows="4" placeholder="写你想发的动态文字..." style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--fg);font-size:14px;resize:vertical">' + esc(dynText) + '</textarea>' +
+      '<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn primary" data-act="pub-dynamic">发布动态</button>' +
+      '<span id="dyn-result" style="font-size:12px;color:var(--t2)"></span>' +
+      '</div>');
+
+    // --- 视频卡片：点启动才投稿 ---
+    var vidPath = S.vidPath || '';
+    var vidTitle = S.vidTitle || '';
+    var vidDesc = S.vidDesc || '';
+    var vidTags = S.vidTags || 'AI,测评';
+    var vidCover = S.vidCover || '';
+    var vidTid = S.vidTid || '124';
+
+    var vidCard = card('投稿视频（点启动才发）', '<span class="tag blue">手动触发</span>',
+      '<div class="sum-text" style="margin-bottom:10px">填好视频信息后，点"启动投稿"才会上传。B站自己会审核，你不用逐条审。</div>' +
+      '<div style="display:grid;gap:8px">' +
+      '<input id="vid-path" placeholder="视频文件完整路径（如 D:\\\\videos\\\\test.mp4）" value="' + esc(vidPath) + '" style="...">' +
+      '<input id="vid-title" placeholder="视频标题（必填，≤80字）" value="' + esc(vidTitle) + '" style="...">' +
+      '<input id="vid-desc" placeholder="视频简介（可选）" value="' + esc(vidDesc) + '" style="...">' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<input id="vid-tid" placeholder="分区ID（默认124）" value="' + esc(vidTid) + '" style="flex:1;min-width:100px">' +
+      '<input id="vid-tags" placeholder="标签（逗号分隔）" value="' + esc(vidTags) + '" style="flex:2;min-width:150px">' +
+      '</div>' +
+      '<input id="vid-cover" placeholder="封面图路径（可选，留空自动抽帧）" value="' + esc(vidCover) + '" style="...">' +
+      '</div>' +
+      '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn primary" data-act="pub-video">启动投稿</button>' +
+      '<span id="vid-result" style="font-size:12px;color:var(--t2)"></span>' +
+      '</div>');
+
+    var noteCard = card('说明', null,
+      '<div class="sum-text">' +
+      '· 动态：你自己写，插件只负责发。<br>' +
+      '· 视频：点"启动投稿"才上传，上传后B站自己审。<br>' +
+      '· 视频内容生成（PPT式+音乐）是后话，本轮只做投稿入口。<br>' +
+      '· 底层工具是 MIT 开源 bilibili-mcp 自带的，上层封装自己写，不抄代码。' +
+      '</div>');
+
+    return dynCard + vidCard + noteCard;
+  }
+
   var RENDER = {
     overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
-    chain: renderChain, safety: renderSafety, settings: renderSettings
+    chain: renderChain, safety: renderSafety, settings: renderSettings, publish: renderPublish
   };
 
   function paint() {
@@ -789,6 +845,47 @@ img.avatar{border:1px solid var(--line);}
         .catch(function (e) { toast('失败：' + e.message); });
     }
     if (act === 'stop') return post('/run/stop', {}).then(function (r) { toast(r.message || '已请求停止'); setTimeout(refresh, 600); });
+
+    // ============ 发布：动态（你自己写，点发布才发） ============
+    if (act === 'pub-dynamic') {
+      var txt = ($('#dyn-input') || {}).value || '';
+      txt = txt.trim();
+      if (!txt) return toast('动态内容不能为空（你自己写，AI 不代写）');
+      if (!confirm('确定发这条动态？\n\n' + txt.slice(0, 120) + (txt.length > 120 ? '...' : ''))) return;
+      var resEl = $('#dyn-result');
+      if (resEl) resEl.textContent = '发布中...';
+      return post('/publish/dynamic', { text: txt })
+        .then(function (r) {
+          if (resEl) resEl.textContent = r.ok ? '✓ 已发布' : ('失败：' + (r.error || '未知'));
+          toast(r.ok ? '动态已发布' : ('发布失败：' + (r.error || '')));
+          if (r.ok) { var di = $('#dyn-input'); if (di) di.value = ''; }
+        })
+        .catch(function (e) { if (resEl) resEl.textContent = '失败：' + e.message; toast('发布失败：' + e.message); });
+    }
+
+    // ============ 发布：视频（点启动才投稿） ============
+    if (act === 'pub-video') {
+      var vp = ($('#vid-path') || {}).value || '';
+      var vt = ($('#vid-title') || {}).value || '';
+      if (!vp.trim()) return toast('缺视频文件路径');
+      if (!vt.trim()) return toast('缺视频标题');
+      if (!confirm('确定投稿这个视频？\n\n标题：' + vt.slice(0, 80) + '\n路径：' + vp.slice(0, 80) + '\n\n上传后 B 站自己审核，不可撤回。')) return;
+      var vresEl = $('#vid-result');
+      if (vresEl) vresEl.textContent = '上传中（大文件可能要几分钟）...';
+      return post('/publish/video', {
+        videoPath: vp.trim(),
+        title: vt.trim(),
+        desc: (($('#vid-desc') || {}).value || '').trim(),
+        tid: Number(($('#vid-tid') || {}).value || '124'),
+        tags: (($('#vid-tags') || {}).value || 'AI,测评').trim(),
+        coverPath: (($('#vid-cover') || {}).value || '').trim()
+      })
+        .then(function (r) {
+          if (vresEl) vresEl.textContent = r.ok ? '✓ 已投稿' : ('失败：' + (r.error || '未知'));
+          toast(r.ok ? '视频已投稿' : ('投稿失败：' + (r.error || '')));
+        })
+        .catch(function (e) { if (vresEl) vresEl.textContent = '失败：' + e.message; toast('投稿失败：' + e.message); });
+    }
     if (act === 'retract') {
       var cnt = ((st().posted || {}).count) || 0;
       if (!cnt) return toast('账本是空的：没有可撤回的内容');
