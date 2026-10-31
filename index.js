@@ -214,8 +214,33 @@ export function apply(ctx, _config) {
   let roundRunning = false          // 防止手动轮次与定时轮次叠跑
   let stopRequested = false         // 用户点了「停止」：下一处检查点就退出
   let roundLabel = ''               // 当前在跑哪种轮次（手动/试跑/定时），给界面显示
+  /**
+   * DSH 能力探头：看看宿主到底把哪些服务暴露给插件（sessions / agents ...）。
+   * 只读：列方法名，**绝不调用**——接口没有公开文档，乱调可能把 DSH 弄坏。
+   * 结果会显示在设置的「运行环境」里，用来判断"能不能把活动写进 DSH 会话"。
+   */
+  function probeDshApi(ctx) {
+    const out = {}
+    const names = ['sessions', 'agents', 'sessionProjections', 'webServer', 'permissions', 'settings']
+    for (const n of names) {
+      try {
+        const svc = ctx && ctx.get ? ctx.get(n) : undefined
+        if (!svc) { out[n] = null; continue }
+        const keys = new Set()
+        try { Object.keys(svc).forEach((k) => keys.add(k)) } catch {}
+        try {
+          let p = Object.getPrototypeOf(svc)
+          while (p && p !== Object.prototype) { Object.getOwnPropertyNames(p).forEach((k) => keys.add(k)); p = Object.getPrototypeOf(p) }
+        } catch {}
+        out[n] = Array.from(keys).filter((k) => k && !k.startsWith('_') && k !== 'constructor').sort().slice(0, 40)
+      } catch (e) { out[n] = 'ERR:' + String(e?.message ?? e).slice(0, 60) }
+    }
+    return out
+  }
+
   // 转写能力探测：15 秒缓存，避免 /state 每 2 秒轮询都去起一个 python 子进程。
   // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
+  let dshApi = null
   let asrInfo = { ready: false, mode: 'local', reason: '还没检测' }
   let asrInfoAt = 0
   async function refreshAsrInfo(c) {
@@ -254,6 +279,7 @@ export function apply(ctx, _config) {
       pkg: PKG_NAME || '',
       update: snapshot(VERSION || '0.0.0'),
       selfUpdate: selfUpdateSnapshot(),
+      dshApi,
       envJob: envJobSnapshot(),
       haveYaml: true,
       safeMode, noAdapter: false,
@@ -647,6 +673,7 @@ export function apply(ctx, _config) {
         try { await handle(req, res) } catch (e) { sendJson(res, 500, { ok: false, error: e?.message ?? String(e) }) }
       },
     }), 'bili-console: /bili-console 页面路由')
+    try { dshApi = probeDshApi(ctx) } catch {}
     log(`已挂载（家=${home}，v${VERSION}）`)
     // 版本号以 lib/version.mjs 为准；package.json 是给外面看的，两者若不一致会让人装错版本，这里提醒一句
     try { if (PKG.version && PKG.version !== VERSION) log(`版本号不一致：lib/version.mjs 是 ${VERSION}，package.json 是 ${PKG.version} —— 发新版请两边一起改`) } catch {}
