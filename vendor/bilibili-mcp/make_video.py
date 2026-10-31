@@ -236,27 +236,68 @@ def main():
     audio_dur = 0.0
     tts_tmp = None
     audio_loop = False
+    card_durs = []          # 每张卡片「声音多长就停多长」（2026-11-1 修：以前按计划时长分配，话说一半就翻页）
     if voice.get('enabled'):
-        text = voice.get('text') or ' '.join(
-            [str(c.get('title') or '') + '。' + '。'.join([str(x) for x in (c.get('lines') or [])]) for c in cards]
-        )
-        text = text.strip()
-        if text:
-            progress(4)
-            log('正在合成配音（免费 edge-tts，需联网）…')
-            tmp_mp3 = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d.mp3' % os.getpid())
-            if tts_to_mp3(
-                text, tmp_mp3,
+        texts = []
+        for c in cards:
+            t = (str(c.get('title') or '') + '。' + '。'.join([str(x) for x in (c.get('lines') or [])])).strip()
+            texts.append(t or '（这一页没有文字）')
+        progress(4)
+        log('正在合成配音（免费 edge-tts，需联网）…')
+        seg_files = []
+        seg_durs = []
+        ok_all = True
+        for i, t in enumerate(texts):
+            seg = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d_%d.mp3' % (os.getpid(), i))
+            good = tts_to_mp3(
+                t, seg,
                 voice.get('voice') or 'zh-CN-XiaoxiaoNeural',
                 voice.get('rate') or '+0%',
                 voice.get('pitch') or '+0Hz',
                 voice.get('volume') or '+0%',
-            ):
+            )
+            if not good:
+                ok_all = False
+                break
+            d = probe_duration(ff, seg)
+            if d <= 0:
+                ok_all = False
+                break
+            seg_files.append(seg)
+            seg_durs.append(d)
+        if ok_all and seg_files:
+            # 把每段配音按顺序拼成一条音轨（同编码直接流复制，时长与各段一致）
+            listfile = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d.txt' % os.getpid())
+            with open(listfile, 'w', encoding='utf-8') as fh:
+                for seg in seg_files:
+                    fh.write("file '%s'\n" % seg.replace('\\', '/').replace("'", "'\\''"))
+            joined = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d.mp3' % os.getpid())
+            try:
+                subprocess.run([ff, '-y', '-f', 'concat', '-safe', '0', '-i', listfile, '-c', 'copy', joined],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
+            except Exception:
+                pass
+            if os.path.exists(joined) and os.path.getsize(joined) > 1000:
+                audio_path = joined
+                tts_tmp = joined
+                # 每页停多久 = 这句配音的长度 + 一点点呼吸（0.35 秒），保证说得完再翻
+                card_durs = [max(1.6, d + 0.35) for d in seg_durs]
+                audio_dur = sum(card_durs)
+                log('配音逐页合成完成：' + ' / '.join('%.1f' % d for d in seg_durs) + ' 秒 → 画面按语音长度走')
+            else:
+                log('配音拼接失败，退回整段模式')
+                ok_all = False
+        if not ok_all or not card_durs:
+            # 兜底：老办法（整段合成），至少能出片
+            text = ' '.join(texts).strip()
+            tmp_mp3 = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d.mp3' % os.getpid())
+            if text and tts_to_mp3(text, tmp_mp3, voice.get('voice') or 'zh-CN-XiaoxiaoNeural',
+                                   voice.get('rate') or '+0%', voice.get('pitch') or '+0Hz', voice.get('volume') or '+0%'):
                 audio_path = tmp_mp3
                 tts_tmp = tmp_mp3
                 audio_dur = probe_duration(ff, tmp_mp3)
-                log('配音时长 %.1f 秒' % audio_dur)
-            progress(10)
+                log('配音时长 %.1f 秒（整段模式）' % audio_dur)
+        progress(10)
 
     # 1b) BGM（可选）：没有配音时，用 BGM 当唯一音轨（循环铺满整段）
     bgm_path = spec.get('bgm') or ''
@@ -265,13 +306,18 @@ def main():
         audio_loop = True
         log('用 BGM 当音轨：%s' % os.path.basename(bgm_path))
 
-    # 2) 卡片时长：有配音就按配音总时长等比分配，让画面跟着声音走
-    base_total = sum(max(1.0, float(c.get('seconds') or 4)) for c in cards)
-    if audio_dur > 0:
-        scale = max(1.0, audio_dur) / base_total
-        durs = [max(1.0, float(c.get('seconds') or 4) * scale) for c in cards]
+    # 2) 卡片时长
+    #    ① 逐页配音成功 → 直接用「这句话多长」当这一页时长（字幕和声音对齐，说完才翻页）
+    #    ② 否则退回按计划时长/总配音等比分配
+    if card_durs and len(card_durs) == len(cards):
+        durs = card_durs
     else:
-        durs = [max(1.0, float(c.get('seconds') or 4)) for c in cards]
+        base_total = sum(max(1.0, float(c.get('seconds') or 4)) for c in cards)
+        if audio_dur > 0:
+            scale = max(1.0, audio_dur) / base_total
+            durs = [max(1.0, float(c.get('seconds') or 4) * scale) for c in cards]
+        else:
+            durs = [max(1.0, float(c.get('seconds') or 4)) for c in cards]
 
     cmd = [ff, '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '%dx%d' % (W, H), '-r', str(fps), '-i', '-']
     if audio_path:
