@@ -42,7 +42,7 @@ import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
-import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady } from './lib/pyenv.mjs'
+import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -291,6 +291,9 @@ export function apply(ctx, _config) {
     const login = loginStatus(home)
     const safeMode = !cfgNow.autoComment && (cfgNow.dmMode === 'off')
     const chain = buildEndpoints(cfgNow, extractHostModels())
+    // 环境状态：/state 也带给网页控制台（之前只有 /status 有，网页端永远显示「待安装」）。
+    // 有 .pyready.json 存档时这一步 2ms 返回，不会拖慢 2 秒一次的轮询（2026-10-31 修）
+    const vst = venvStatus(home)
     return {
       ok: true, home, now: new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }),
       version: VERSION || '0.0.0',
@@ -300,6 +303,8 @@ export function apply(ctx, _config) {
       dshApi,
       dshPush,
       envJob: envJobSnapshot(),
+      venv: vst,
+      venvReady: Boolean(vst.venvReady || vst.baseWithDeps),
       haveYaml: true,
       safeMode, noAdapter: false,
       status: { phase: '值守中', label: guardian.active() ? '风控冷却中' : '控制台在线', tone: guardian.active() ? 'warn' : 'ok' },
@@ -752,7 +757,14 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message ?? e) }) }
     }
     if (req.method === 'GET' && path === '/env/diag') {
-      try { clearReady(home); return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
+      try {
+        // 「重新检测」= 推翻旧结论、重新实话实说：先清掉存档和探测缓存，再**强制实时复检**一遍；
+        // 复检成功时 venvStatus 内部会自动把新结论重新落盘（markReady），界面 2 秒内回到「就绪」。
+        // 之前只清不补：用户点一下检测，.pyready.json 存档就没了，重启后又从冷探测开始 → 又「待安装」（2026-10-31 修）
+        clearReady(home); clearDepCache()
+        const vst = venvStatus(home, { force: true })
+        return sendJson(res, 200, { ok: true, ready: Boolean(vst.venvReady || vst.baseWithDeps), baseWithDeps: vst.baseWithDeps || null, ...envDiagnostics(home) })
+      }
       catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     if (req.method === 'GET' && path === '/selfcheck') {
