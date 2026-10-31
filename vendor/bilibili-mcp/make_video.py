@@ -278,8 +278,16 @@ def main():
         if audio_loop:
             cmd += ['-stream_loop', '-1']
         cmd += ['-i', audio_path]
-    cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart']
+    # 省电（2026-11-1，针对手机）：限制 ffmpeg 单线程 + ultrafast 预设 —— 边打游戏边跑时
+    # 编码不再把所有核吃满（代价：文件大约 10~20%，画质肉眼几乎没差）
+    preset = 'veryfast'
+    extra = []
+    if spec.get('lowPower'):
+        preset = 'ultrafast'
+        extra = ['-threads', '1']
+        log('省电模式：ffmpeg 限制单线程 + ultrafast')
+    cmd += ['-c:v', 'libx264', '-preset', preset, '-crf', '26', '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart'] + extra
     if audio_path:
         cmd += ['-c:a', 'aac', '-b:a', '96k', '-shortest']
     cmd += [out]
