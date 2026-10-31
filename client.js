@@ -532,6 +532,8 @@ window.__ModuleLoader__.load({
       // 环境自检结果 / 进行中
       const [envDiag, setEnvDiag] = React.useState(null)
       const [envBusy, setEnvBusy] = React.useState(false)
+      const [asrCheck, setAsrCheck] = React.useState(null)
+      const [asrChecking, setAsrChecking] = React.useState(false)
       const [newKw, setNewKw] = React.useState('')
       // 设置页纯文本/数字输入：用本地草稿，避免被 2 秒轮询的 state 覆盖（与 keyword/persona 同策略）
       const [mentionDraft, setMentionDraft] = React.useState(null)
@@ -827,6 +829,15 @@ window.__ModuleLoader__.load({
           if (r && r.found) toast_('找到 Python：' + r.found.cmd + '（' + r.found.ver + '）')
           else toast_('还是没找到 Python，下面列出了试过的每个路径')
         } catch (e) { toast_('检测失败：' + String(e?.message ?? e)) } finally { setEnvBusy(false) }
+      }
+      /** 转写自检：真 import 一次，把版本号亮出来 */
+      const checkAsr = async () => {
+        setAsrChecking(true)
+        try {
+          const r = await jget('/env/asr-check')
+          setAsrCheck(r || null)
+          toast_(r && r.ok ? ('可用：' + (r.backend || '') + ' ' + (r.version || '')) : ('不可用：' + ((r && r.error) || '未知')))
+        } catch (e) { toast_('自检失败：' + String(e?.message ?? e)) } finally { setAsrChecking(false) }
       }
       /** 一键安装运行环境：auto=Python+依赖 / deps=只装依赖 / asr=转写后端 */
       const installEnv = async (what) => {
@@ -1362,6 +1373,16 @@ window.__ModuleLoader__.load({
                 h('div', { 'data-bd-ds': '' }, '本地＝装在自己机器上（约 200MB，手机常装不下）；云端＝填个 API，几分钱一条，不用装东西')),
               Select({ value: mode, onChange: (v) => saveOne('asrMode', v), minWidth: 140 },
                 h('option', { value: 'local' }, '本地（要装）'), h('option', { value: 'cloud' }, '云端 API'))),
+
+            asr.ready ? h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '10px', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: asrChecking, onClick: checkAsr },
+                asrChecking ? '自检中…' : '转写自检'),
+              asrCheck ? h('span', {
+                'data-bd-ds': '',
+                style: { fontSize: '12px', color: asrCheck.ok ? 'var(--green-tx)' : 'var(--red-tx)' },
+              }, asrCheck.ok
+                ? ('可用：' + (asrCheck.backend || '') + ' ' + (asrCheck.version || '') + (asrCheck.ffmpeg ? ' · ffmpeg ✓' : ' · 无 ffmpeg（faster-whisper 自带解码，通常不影响）'))
+                : ('不可用：' + (asrCheck.error || ''))) : null) : null,
             mode === 'cloud'
               ? h('div', null,
                 h('div', { 'data-bd-setrow': '' },
