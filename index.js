@@ -20,6 +20,7 @@
  *   - 模型降级链（lib/chain.mjs + lib/llm.mjs）：配额/NO_ADAPTER → 自动跳下一节
  * ============================================================================
  */
+import { createReadStream } from 'node:fs'
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -594,12 +595,73 @@ export function apply(ctx, _config) {
     if (req.method === 'GET' && path === '/publish/genvideo/status') {
       return sendJson(res, 200, { ok: true, ...videoJobSnapshot() })
     }
+    // 测一下「写稿用的模型」能不能真连通（省得填错了还一直生成失败）
+    if (req.method === 'POST' && path === '/publish/test-model') {
+      try {
+        const c = loadConfig(home)
+        const chain = buildVideoChain(c, { buildEndpoints, hostModels: extractHostModels() })
+        if (!Array.isArray(chain) || !chain.length) {
+          return sendJson(res, 200, { ok: false, error: '没拼出可用的模型：检查来源设置和接口/模型名有没有填' })
+        }
+        const r = await chat(chain, {
+          system: '你是连通性测试。',
+          user: '只回两个字：可用',
+          maxTokens: 16, temperature: 0.1, thinkingOff: c.thinkingOff !== false,
+        })
+        if (!r.ok) return sendJson(res, 200, { ok: false, error: r.lastError || '模型调用失败' })
+        return sendJson(res, 200, { ok: true, reply: String(r.text || '').trim().slice(0, 60), model: chain[0].label || chain[0].model })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 列出已生成的视频（让用户在插件页面里直接放着看，不用先发到 B 站）
+    if (req.method === 'GET' && path === '/publish/video-list') {
+      try {
+        const d = join(home, '.video')
+        if (!existsSync(d)) return sendJson(res, 200, { ok: true, files: [] })
+        const files = readdirSync(d)
+          .filter((f) => f.endsWith('.mp4'))
+          .map((f) => {
+            try { return { name: f, size: statSync(join(d, f)).size, mtime: statSync(join(d, f)).mtimeMs } } catch { return null }
+          })
+          .filter(Boolean)
+          .sort((a, b) => b.mtime - a.mtime)
+          .slice(0, 12)
+        return sendJson(res, 200, { ok: true, files })
+      } catch { return sendJson(res, 200, { ok: true, files: [] }) }
+    }
+    // 直接在插件页面里看生成的视频（不用等发到 B 站）
+    // 只读 .video 目录里的文件，且必须是合法文件名——不让通过路径参数翻到别的地方去
+    if (req.method === 'GET' && path === '/publish/video-file') {
+      try {
+        const name = String(new URL(req.url, 'http://x').searchParams.get('n') || '')
+        if (!name || /[/\\]|\.\./.test(name) || !name.endsWith('.mp4')) {
+          res.writeHead(400); return res.end('bad name')
+        }
+        const p = join(home, '.video', name)
+        if (!existsSync(p)) { res.writeHead(404); return res.end('not found') }
+        const st = statSync(p)
+        const range = req.headers.range
+        res.setHeader('Content-Type', 'video/mp4')
+        res.setHeader('Accept-Ranges', 'bytes')
+        if (range) {
+          const m = /bytes=(\d*)-(\d*)/.exec(range)
+          const start = m && m[1] ? Number(m[1]) : 0
+          const end = m && m[2] ? Number(m[2]) : st.size - 1
+          res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 })
+          createReadStream(p, { start, end }).pipe(res)
+        } else {
+          res.writeHead(200, { 'Content-Length': st.size })
+          createReadStream(p).pipe(res)
+        }
+        return
+      } catch (e) { res.writeHead(500); return res.end('err') }
+    }
     // 配音试听：用当前声线/语速/音调/音量念一句，返回 mp3（免费 edge-tts，需要联网）
     if (req.method === 'POST' && path === '/publish/tts-preview') {
       try {
         const b = await readBody(req)
         const c = loadConfig(home)
-        const r = await previewTts({ cfg: c, text: String(b.text || '').slice(0, 120) })
+        // ⚠️ home 必须传进去，否则手机上拿到的是别的 Python → 一直报没装 edge-tts
+        const r = await previewTts({ cfg: c, home, text: String(b.text || '').slice(0, 120) })
         return sendJson(res, 200, r)
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
