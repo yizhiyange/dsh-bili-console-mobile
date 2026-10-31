@@ -771,7 +771,13 @@ img.avatar{border:1px solid var(--line);}
     var cg = cfg();
     var epList = (st().chain && st().chain.endpoints) || [];
     var genSetCard = card('视频生成设置', '独立配置，和发评论的分开', '',
-      toggleRow('配音（需联网）', '免费 edge-tts 合成旁白，要连微软服务器；关掉=纯画面、渲染全程不联网（首次装 30MB 依赖还是要联网一次）', cg.videoVoice !== false, 'videoVoice') +
+      toggleRow('配音（需联网）', '微软 edge-tts 免费合成旁白（A 级 TTS），要连微软服务器；关掉=纯画面、渲染全程不联网（首次装 30MB 依赖还是要联网一次）', cg.videoVoice !== false, 'videoVoice') +
+      (cg.videoVoice !== false
+        ? setRow('配音声线', '都是微软 edge-tts 的音色，免费；云希=年轻男声、晓晓=标准女声、云野=播音男声、晓伊=温柔女声', selectHTML('videoVoiceName', cg.videoVoiceName || 'zh-CN-XiaoxiaoNeural', [
+            ['zh-CN-XiaoxiaoNeural', '晓晓（标准女声）'], ['zh-CN-YunxiNeural', '云希（年轻男声）'], ['zh-CN-YunyangNeural', '云野（播音男声）'],
+            ['zh-CN-XiaoyiNeural', '晓伊（温柔女声）'], ['zh-CN-YunjianNeural', '云健（活力男声）'],
+            ['zh-CN-liaoning-XiaobeiNeural', '晓北（东北口音女声）'], ['zh-CN-shaanxi-XiaoniNeural', '小妮（陕西口音女声）'], ['zh-CN-YunxiaNeural', '云夏（少年男声）']]))
+        : '') +
       toggleRow('用 AI 写稿（模型的开关）', '这就是「关掉模型」的开关：关掉后完全不跑模型、不花 key，用当天刷到的标题拼合集', cg.videoUseAI !== false, 'videoUseAI') +
       setRow('清晰度', '默认 720p；1080p 更清楚但更慢；480p 会糊，只建议极端省电', selectHTML('videoQuality', cg.videoQuality || '720', [['720', '720p（默认）'], ['1080', '1080p'], ['480', '480p 省电']])) +
       setRow('视频卡片数（画面张数）', '指视频里翻页的文字画面有几张（PPT 页数），不是人格卡；人格卡自动沿用「人设」页的配置。越多越长；手机建议 4 张', stepperHTML('videoMaxCards', cg.videoMaxCards || 6, '张')) +
@@ -779,7 +785,7 @@ img.avatar{border:1px solid var(--line);}
       (cg.videoUseAI !== false && cg.videoModelSource === 'custom'
         ? '<div class="guard-row" style="flex-wrap:wrap;gap:8px"><div class="txt" style="flex:1 1 100%"><div class="lb">写稿专用自定义模型</div><div class="ds">兼容 OpenAI 格式的接口都行；Key 存本地配置，不会上传</div></div>' +
           inputHTML('videoCustomBaseUrl', cg.videoCustomBaseUrl, '接口地址，一般是 https://xxx.xxx/v1 这种结尾带 /v1 的') +
-          inputHTML('videoCustomModel', cg.videoCustomModel, '模型名，照你服务商后台里写的填') +
+          inputHTML('videoCustomModel', cg.videoCustomModel, '模型名，如 deepseek-chat / glm-4-flash / qwen-turbo 这类') +
           inputHTML('videoCustomKey', cg.videoCustomKey, 'API Key', 'password') +
           inputHTML('videoCustomName', cg.videoCustomName, '显示名（可选）') + '</div>'
         : '') +
@@ -787,8 +793,8 @@ img.avatar{border:1px solid var(--line);}
       toggleRow('画面生成模型（可选，进阶）', '用文生图接口给每张卡片画背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', !!cg.videoImageEnabled, 'videoImageEnabled') +
       (cg.videoImageEnabled
         ? '<div class="guard-row" style="flex-wrap:wrap;gap:8px"><div class="txt" style="flex:1 1 100%"><div class="lb">文生图接口（OpenAI 兼容）</div></div>' +
-          inputHTML('videoImageBaseUrl', cg.videoImageBaseUrl, '同上，结尾一般带 /v1') +
-          inputHTML('videoImageModel', cg.videoImageModel, '模型名，照你服务商后台里写的填') +
+          inputHTML('videoImageBaseUrl', cg.videoImageBaseUrl, '接口地址（OpenAI 兼容），如 https://api.siliconflow.cn/v1') +
+          inputHTML('videoImageModel', cg.videoImageModel, '模型名，如 deepseek-chat / glm-4-flash / qwen-turbo 这类') +
           inputHTML('videoImageKey', cg.videoImageKey, 'API Key', 'password') + '</div>'
         : ''));
 
