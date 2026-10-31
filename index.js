@@ -45,8 +45,6 @@ import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pyenv.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
-// 插件自带对话（不走 DSH 会话，存自己的 chat.jsonl）
-import { loadChat, appendChat, clearChat, chatReply } from './lib/chat.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
 import { pushToDshSession, buildReportPrompt, listMethods } from './lib/dshsession.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
@@ -357,24 +355,6 @@ export function apply(ctx, _config) {
       const r = await pushToDshSession(hostCtx, { home, text, cwd: home, sessionId: 'bili-console' })
       dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }
       return sendJson(res, 200, { ok: r.ok, ...r })
-    }
-    // ===== 插件自带对话（独立于 DSH 会话）=====
-    if (req.method === 'GET' && path === '/chat') {
-      return sendJson(res, 200, { ok: true, messages: loadChat(home, 200) })
-    }
-    if (req.method === 'POST' && path === '/chat/send') {
-      const b = await readBody(req)
-      const text = String(b.text || '').trim().slice(0, 2000)
-      if (!text) return sendJson(res, 200, { ok: false, error: '说点什么再发' })
-      appendChat(home, { role: 'me', kind: 'sys', text })
-      const cfgC = loadConfig(home)
-      const r = await chatReply(cfgC, extractHostModels(), text, home)
-      if (r.ok) appendChat(home, { role: 'bot', kind: 'reply', text: r.text, model: r.modelUsed || '' })
-      return sendJson(res, 200, r)
-    }
-    if (req.method === 'POST' && path === '/chat/clear') {
-      clearChat(home)
-      return sendJson(res, 200, { ok: true })
     }
     // ===== 版本自检 =====
     // GET  /update/state  —— 拿当前版本 + 上次检查结果 + 可用加速源（不联网，秒回）
