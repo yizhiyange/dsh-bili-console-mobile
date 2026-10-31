@@ -89,9 +89,37 @@ def wrap_cjk(draw, text, font, max_w):
     return lines
 
 
+def load_bg(path, W, H):
+    """把背景图按 cover 方式铺满（不变形），失败返回 None"""
+    try:
+        from PIL import Image
+        if not path or not os.path.exists(path):
+            return None
+        im = Image.open(path).convert('RGB')
+        sw, sh = im.size
+        if not sw or not sh:
+            return None
+        scale = max(W / sw, H / sh)
+        nw, nh = int(sw * scale + 0.5), int(sh * scale + 0.5)
+        im = im.resize((max(W, nw), max(H, nh)), Image.LANCZOS)
+        left = max(0, (im.size[0] - W) // 2)
+        top = max(0, (im.size[1] - H) // 2)
+        return im.crop((left, top, left + W, top + H))
+    except Exception as e:
+        log('背景图加载失败：%s' % str(e)[:100])
+        return None
+
+
 def render_card(card, idx, total, W, H, font_path):
     from PIL import Image, ImageDraw, ImageFont
-    img = Image.new('RGB', (W, H), (15, 17, 21))
+    bg = load_bg(card.get('bg') or '', W, H)
+    if bg is not None:
+        img = bg.copy()
+        # 压暗一层，保证白字可读（0=solid, 255=transparent）
+        ov = Image.new('RGBA', (W, H), (8, 10, 14, 168))
+        img = Image.alpha_composite(img.convert('RGBA'), ov).convert('RGB')
+    else:
+        img = Image.new('RGB', (W, H), (15, 17, 21))
     d = ImageDraw.Draw(img)
     # 左侧强调条
     d.rectangle([0, 0, 10, H], fill=(64, 158, 255))
@@ -135,15 +163,16 @@ def render_card(card, idx, total, W, H, font_path):
     return img
 
 
-def tts_to_mp3(text, out_mp3, voice, rate):
-    """edge-tts：免费、不需要 key，只要求联网。失败返回 False"""
+def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%'):
+    """edge-tts：免费、不需要 key，只要求联网。失败返回 False
+    微软原生支持 语速 rate / 音调 pitch / 音量 volume（2026-11-1 全开放）"""
     try:
         import edge_tts
     except Exception:
         log('没装 edge-tts，跳过配音')
         return False
     async def _run():
-        com = edge_tts.Communicate(text, voice, rate=rate)
+        com = edge_tts.Communicate(text, voice, rate=rate, volume=volume, pitch=pitch)
         await com.save(out_mp3)
     try:
         asyncio.run(_run())
@@ -205,6 +234,8 @@ def main():
     voice = spec.get('voice') or {}
     audio_path = None
     audio_dur = 0.0
+    tts_tmp = None
+    audio_loop = False
     if voice.get('enabled'):
         text = voice.get('text') or ' '.join(
             [str(c.get('title') or '') + '。' + '。'.join([str(x) for x in (c.get('lines') or [])]) for c in cards]
@@ -214,11 +245,25 @@ def main():
             progress(4)
             log('正在合成配音（免费 edge-tts，需联网）…')
             tmp_mp3 = os.path.join(tempfile.gettempdir(), 'dshvideo_tts_%d.mp3' % os.getpid())
-            if tts_to_mp3(text, tmp_mp3, voice.get('voice') or 'zh-CN-XiaoxiaoNeural', voice.get('rate') or '+0%'):
+            if tts_to_mp3(
+                text, tmp_mp3,
+                voice.get('voice') or 'zh-CN-XiaoxiaoNeural',
+                voice.get('rate') or '+0%',
+                voice.get('pitch') or '+0Hz',
+                voice.get('volume') or '+0%',
+            ):
                 audio_path = tmp_mp3
+                tts_tmp = tmp_mp3
                 audio_dur = probe_duration(ff, tmp_mp3)
                 log('配音时长 %.1f 秒' % audio_dur)
             progress(10)
+
+    # 1b) BGM（可选）：没有配音时，用 BGM 当唯一音轨（循环铺满整段）
+    bgm_path = spec.get('bgm') or ''
+    if not audio_path and bgm_path and os.path.exists(bgm_path):
+        audio_path = bgm_path
+        audio_loop = True
+        log('用 BGM 当音轨：%s' % os.path.basename(bgm_path))
 
     # 2) 卡片时长：有配音就按配音总时长等比分配，让画面跟着声音走
     base_total = sum(max(1.0, float(c.get('seconds') or 4)) for c in cards)
@@ -230,6 +275,8 @@ def main():
 
     cmd = [ff, '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '%dx%d' % (W, H), '-r', str(fps), '-i', '-']
     if audio_path:
+        if audio_loop:
+            cmd += ['-stream_loop', '-1']
         cmd += ['-i', audio_path]
     cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart']
@@ -259,9 +306,9 @@ def main():
     if code != 0:
         log('ffmpeg 失败（退出码 %d）：%s' % (code, err[-600:]))
         return 4
-    if audio_path:
+    if tts_tmp:
         try:
-            os.remove(audio_path)
+            os.remove(tts_tmp)
         except Exception:
             pass
     progress(100)
