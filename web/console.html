@@ -753,6 +753,13 @@ img.avatar{border:1px solid var(--line);}
       ? '<span class="tag green">已登录：' + esc(me.uname || '') + '</span>'
       : '<span class="tag amber">未登录（先去登录页扫码）</span>';
 
+    var genCard = card('一键生成视频（最简图文）', 'AI 写文案 → 本地渲染，零额外 API 费；首次要装约 30MB 渲染组件', '',
+      '<div class="inputbox"><input id="gen-topic" placeholder="主题（留空就用今天刷到的内容）" style="flex:1;min-width:0"></div>' +
+      '<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn primary" data-act="pub-gen">生成视频</button>' +
+      '<span id="gen-status" style="font-size:12px;color:var(--t2)">空闲</span>' +
+      '</div>');
+
     // --- 动态卡片：纯手动，AI 不代写 ---
     var dynText = S.dynText || '';
     var dynCard = card('发动态（纯手动）', loginTag,
@@ -796,7 +803,7 @@ img.avatar{border:1px solid var(--line);}
       '· 底层工具是 MIT 开源 bilibili-mcp 自带的，上层封装自己写，不抄代码。' +
       '</div>');
 
-    return dynCard + vidCard + noteCard;
+    return genCard + dynCard + vidCard + noteCard;
   }
 
   var RENDER = {
@@ -895,6 +902,26 @@ img.avatar{border:1px solid var(--line);}
     if (act === 'stop') return post('/run/stop', {}).then(function (r) { toast(r.message || '已请求停止'); setTimeout(refresh, 600); });
 
     // ============ 发布：动态（你自己写，点发布才发） ============
+    if (act === 'pub-gen') {
+      var topicEl = $('#gen-topic');
+      var topic = topicEl ? String(topicEl.value || '').trim() : '';
+      var gs = $('#gen-status');
+      if (gs) gs.textContent = '启动中…';
+      return post('/publish/genvideo', { topic: topic }).then(function (r) {
+        if (!r || !r.ok) { if (gs) gs.textContent = '失败：' + ((r && r.error) || '未知'); return toast('启动失败') }
+        if (gs) gs.textContent = '生成中…';
+        var timer = setInterval(function () {
+          get('/publish/genvideo/status').then(function (s) {
+            if (gs) gs.textContent = s.error ? ('失败：' + s.error) : (s.done ? '完成' : ((s.phase || '') + ' ' + (s.pct || 0) + '%'));
+            if (s.done && s.outPath) {
+              clearInterval(timer);
+              var vp = $('#vid-path'); if (vp) vp.value = s.outPath;
+              toast('生成好了，路径已填进投稿表单');
+            } else if (s.error) { clearInterval(timer); toast('生成失败：' + s.error) }
+          }).catch(function () { /* 下一轮再试 */ });
+        }, 1500);
+      }).catch(function (e) { if (gs) gs.textContent = '失败：' + e.message; toast('启动失败：' + e.message) });
+    }
     if (act === 'pub-dynamic') {
       var txt = ($('#dyn-input') || {}).value || '';
       txt = txt.trim();
