@@ -79,8 +79,14 @@ input,select,textarea{font-family:inherit;color:var(--t1);}
 .toggle::after{content:"";position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.2);}
 .toggle.on{background:var(--blue);} .toggle.on::after{left:23px;}
 
-.selectbox{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:13px;min-width:130px;}
-.selectbox select{border:none;outline:none;background:none;font-size:13px;width:100%;cursor:pointer;appearance:none;}
+/* 自绘下拉（2026-10-31）：原生 <select> 在 webview 里点不开、弹出层永远白底 */
+.selectbox{position:relative;display:inline-block;min-width:130px;}
+.selbtn{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:13px;color:var(--t1);cursor:pointer;font-family:inherit;}
+.selbtn i{color:var(--t2);font-size:11px;font-style:normal;}
+.selpop{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:80;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.22);padding:4px;max-height:240px;overflow:auto;display:none;}
+.selopt{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:transparent;color:var(--t1);font-size:13px;border-radius:6px;cursor:pointer;font-family:inherit;}
+.selopt:hover{background:rgba(127,127,127,.16);}
+.selopt.on{background:rgba(127,127,127,.22);font-weight:600;}
 .inputbox{display:flex;align-items:center;height:36px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);font-size:13px;gap:8px;}
 .inputbox input{border:none;outline:none;flex:1;font-size:13px;background:none;min-width:0;}
 .stepper{display:inline-flex;align-items:center;gap:10px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:110px;justify-content:space-between;}
@@ -382,9 +388,14 @@ img.avatar{border:1px solid var(--line);}
       '" value="' + esc(v) + '" placeholder="' + esc(ph || '') + '"></div>';
   }
   function selectHTML(key, val, opts) {
-    return '<div class="selectbox"><select data-sel="' + key + '">' + opts.map(function (o) {
-      return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(val) ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
-    }).join('') + '</select></div>';
+    var cur = opts.filter(function (o) { return String(o[0]) === String(val) })[0] || opts[0] || ['', ''];
+    return '<div class="selectbox" data-selbox>' +
+      '<input type="hidden" data-sel="' + key + '" value="' + esc(cur[0]) + '">' +
+      '<button type="button" class="selbtn" data-selbtn><span data-seltxt>' + esc(cur[1]) + '</span><i>▾</i></button>' +
+      '<div class="selpop" data-selpop>' +
+      opts.map(function (o) {
+        return '<button type="button" class="selopt' + (String(o[0]) === String(cur[0]) ? ' on' : '') + '" data-selopt data-v="' + esc(o[0]) + '">' + esc(o[1]) + '</button>';
+      }).join('') + '</div></div>';
   }
 
   function renderOverview() {
@@ -814,6 +825,34 @@ img.avatar{border:1px solid var(--line);}
   }
 
   document.addEventListener('click', function (ev) {
+    /* 自绘下拉（2026-10-31）：原生 <select> 在 webview 里点不开、弹出层永远白底 */
+    var sbtn = ev.target.closest('[data-selbtn]');
+    if (sbtn) {
+      var sbox = sbtn.closest('[data-selbox]');
+      var spop = sbox ? sbox.querySelector('[data-selpop]') : null;
+      var show = !!(spop && spop.style.display !== 'block');
+      document.querySelectorAll('[data-selpop]').forEach(function (x) { x.style.display = 'none' });
+      if (spop && show) spop.style.display = 'block';
+      return;
+    }
+    var sopt = ev.target.closest('[data-selopt]');
+    if (sopt) {
+      var sb = sopt.closest('[data-selbox]');
+      if (sb) {
+        var hid = sb.querySelector('[data-sel]');
+        if (hid) { hid.value = sopt.getAttribute('data-v'); hid.dispatchEvent(new Event('change', { bubbles: true })) }
+        var lbl = sb.querySelector('[data-seltxt]');
+        if (lbl) lbl.textContent = sopt.textContent;
+        sb.querySelectorAll('[data-selopt]').forEach(function (x) { x.classList.remove('on') });
+        sopt.classList.add('on');
+        var pp = sb.querySelector('[data-selpop]');
+        if (pp) pp.style.display = 'none';
+      }
+      return;
+    }
+    if (!ev.target.closest('[data-selbox]')) {
+      document.querySelectorAll('[data-selpop]').forEach(function (x) { x.style.display = 'none' });
+    }
     var pill = ev.target.closest('.pill');
     if (pill && pill.dataset.page && !ev.target.closest('[data-act]')) return goto(pill.dataset.page);
     var t = ev.target.closest('[data-act]');
