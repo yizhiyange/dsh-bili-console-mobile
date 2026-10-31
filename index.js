@@ -43,7 +43,7 @@ import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
-import { startVideoJob, videoJobSnapshot } from './lib/videogen.mjs'
+import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -80,10 +80,22 @@ export const Config = !z ? undefined : z.object({
   autoCoin: z.boolean().default(false).extra('volatile', true),
   coinPerDay: z.natural().default(2).extra('volatile', true),
   videoVoice: z.boolean().default(true).extra('volatile', true),
-  videoQuality: z.string().default('auto').extra('volatile', true),
+  videoQuality: z.string().default('720').extra('volatile', true),
   videoUseAI: z.boolean().default(true).extra('volatile', true),
   videoMaxCards: z.natural().default(6).extra('volatile', true),
   videoModel: z.string().default('').extra('volatile', true),
+  videoCustomEnabled: z.boolean().default(false).extra('volatile', true),
+  videoCustomBaseUrl: z.string().default('').extra('volatile', true),
+  videoCustomModel: z.string().default('').extra('volatile', true),
+  videoCustomKey: z.string().default('').extra('volatile', true),
+  videoCustomName: z.string().default('').extra('volatile', true),
+  videoImageEnabled: z.boolean().default(false).extra('volatile', true),
+  videoImageBaseUrl: z.string().default('').extra('volatile', true),
+  videoImageModel: z.string().default('').extra('volatile', true),
+  videoImageKey: z.string().default('').extra('volatile', true),
+  videoModelSource: z.string().default('dsh').extra('volatile', true),
+  useAssets: z.boolean().default(false).extra('volatile', true),
+  lowPower: z.boolean().default(false).extra('volatile', true),
   replyToComments: z.boolean().default(false).extra('volatile', true),
   replyPerRound: z.natural().default(1).extra('volatile', true),
   transcribe: z.boolean().default(false).extra('volatile', true),
@@ -535,15 +547,43 @@ export function apply(ctx, _config) {
       try {
         const b = await readBody(req)
         const c = loadConfig(home)
+        const hostModels = extractHostModels()
+        // 模型来源（用户要求）：
+        //   dsh   = 只取「DSH 里配的模型」，**不走评论的降级链**
+        //   chain = 跟评论用同一条链
+        //   custom= 视频专用自定义模型（在设置里单独填接口/模型/Key），绝不与评论混
+        let chain
+        chain = buildVideoChain(c, { buildEndpoints, hostModels })
         const r = startVideoJob({
-          home, cfg: c, chain: buildEndpoints(c, extractHostModels()),
+          home, cfg: c, chain,
           topic: String(b.topic || '').slice(0, 120),
         })
-        return sendJson(res, 200, r)
+        return sendJson(res, 200, { ...r, chainCount: Array.isArray(chain) ? chain.length : 0 })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     if (req.method === 'GET' && path === '/publish/genvideo/status') {
       return sendJson(res, 200, { ok: true, ...videoJobSnapshot() })
+    }
+    // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
+    if (req.method === 'GET' && path === '/assets') {
+      return sendJson(res, 200, { ok: true, items: listAssets(home) })
+    }
+    if (req.method === 'POST' && path === '/assets') {
+      const b = await readBody(req)
+      const ok = saveAssets(home, b.items)
+      return sendJson(res, 200, { ok, items: listAssets(home) })
+    }
+    if (req.method === 'POST' && path === '/assets/reveal') {
+      try {
+        const fs = await import('node:fs')
+        const dir = join(home, 'assets')
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        const { exec } = await import('node:child_process')
+        if (process.platform === 'win32') exec(`explorer "${dir.replace(/"/g, '')}"`)
+        else if (process.platform === 'darwin') exec(`open "${dir.replace(/"/g, '')}"`)
+        else exec(`xdg-open "${dir.replace(/"/g, '')}"`)
+        return sendJson(res, 200, { ok: true, dir })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
 
     // POST /publish/video —— 手动投稿视频（点启动才发；视频路径/标题/分区/标签由前端给）
