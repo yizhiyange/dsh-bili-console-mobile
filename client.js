@@ -1455,6 +1455,15 @@ window.__ModuleLoader__.load({
               ? 'AI 拿这些词去 B站 搜视频。加/删都立刻保存，不用再点别的按钮。'
               : '⚠️ 一个都没填的话，「跑一轮」会被直接拒绝（它不知道该搜什么）。在上面输入一个词，按回车或点「添加」。')))
 
+        /* 视频从哪来（2026-10-31 加：固定关键词会一直捞同一个池子） */
+        blocks.push(Card({ title: '视频从哪来', sub: '固定关键词会一直捞同一个池子，推荐流是活水' },
+          ToggleRow({ label: '首页个性化推荐流', note: 'B站按你这个账号的口味实时推的视频，最新最相关。它和关键词是互补的：关键词决定你「搜什么」，推荐流反映你「平时爱看什么」', on: cfg.useHomeFeed !== false, onChange: (v) => saveOne('useHomeFeed', v) }),
+          ToggleRow({ label: '关键词搜索', note: '用上面填的关键词去搜。可以关掉、只用推荐流。注意：关键词本身也会慢慢培养账号的推荐口味——你常搜什么、常看什么，首页推荐就越贴近什么', on: cfg.useKeywordSearch !== false, onChange: (v) => saveOne('useKeywordSearch', v) }),
+          ToggleRow({ label: '两级筛选（省 token）', note: '先把一批视频的标题/时长/播放一次性粗筛，只对最值得的几条取字幕深判——省掉约 80% 的字幕请求和模型调用', on: cfg.triage !== false, onChange: (v) => saveOne('triage', v) }),
+          h('div', { 'data-bd-setrow': '' },
+            h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '细看几条'), h('div', { 'data-bd-ds': '' }, '粗筛之后真正取字幕深判的条数；越大越不容易漏，但越费 token')),
+            Stepper({ value: (cfg.triageTop || 5) + ' 条', onStep: (d) => step('triageTop', d, ' 条') }))))
+
         /* 评论与互动 */
         blocks.push(Card({ title: '评论与互动', sub: null },
           ToggleRow({ label: '自动评论并 @', note: '开着才会发评论；关了就只挑不发，不打扰任何人', on: !!cfg.autoComment, onChange: (v) => saveOne('autoComment', v) }),
@@ -1464,6 +1473,11 @@ window.__ModuleLoader__.load({
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每轮最多评论'), h('div', { 'data-bd-ds': '' }, '一轮里最多发几条；超出自动暂停，防止刷太猛被盯上')),
             Stepper({ value: (cfg.commentPerRound || 0) + ' 条', onStep: (d) => step('commentPerRound', d, ' 条') })),
+          ToggleRow({ label: '点赞（值得看）', note: '发完评论后，评级是「值得看」就顺手点个赞。不增加评论数，但让账号更像真人', on: !!cfg.autoLike, onChange: (v) => saveOne('autoLike', v) }),
+          ToggleRow({ label: '投币（值得看）', note: '会花掉你自己账号的硬币，所以默认关、每天有上限。打开后只给「值得看」投 1 个', on: !!cfg.autoCoin, onChange: (v) => saveOne('autoCoin', v) }),
+          h('div', { 'data-bd-setrow': '' },
+            h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每天最多投几个币'), h('div', { 'data-bd-ds': '' }, '防止一口气把币花光；默认 2 个')),
+            Stepper({ value: (cfg.coinPerDay || 0) + ' 个', onStep: (d) => step('coinPerDay', d, ' 个') })),
           ToggleRow({ label: '回复评论', note: '别人回复你的评论时，它接一句（每轮最多「每轮回复几条」条）。不保存上下文时它只看到对方那一句；想让它记得来龙去脉，到「设置 → 上下文与记忆」打开保留上下文', on: !!cfg.replyToComments, onChange: (v) => saveOne('replyToComments', v) }),
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每轮回复几条'), h('div', { 'data-bd-ds': '' }, '回评论的轮次上限；每条 100 字以内')),
