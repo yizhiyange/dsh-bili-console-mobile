@@ -42,7 +42,7 @@ import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
-import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pyenv.mjs'
+import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady } from './lib/pyenv.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -244,6 +244,20 @@ export function apply(ctx, _config) {
   // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
   let hostCtx = null          // apply 时拿到的宿主上下文，用来调 agents 服务
   let dshPush = { ok: null, at: 0, error: '', stage: '' }
+
+  /** 开了「发进 DSH 会话」就把这一轮小结投过去（手动轮 / 定时轮共用；异步，不挡返回，失败只记日志） */
+  async function maybePushRound(home, s) {
+    try {
+      if (!loadConfig(home).dshSession) return
+      const lines = [
+        '搜到 ' + (s.scanned || 0) + ' 条，挑中 ' + (s.picked || 0) + ' 条，' + (s.dryRun ? '试跑没发出去' : ('发了 ' + (s.posted || 0) + ' 条评论')),
+        ...(s.items || []).filter((x) => x.grade === '值得看' || x.grade === '可以看').slice(0, 5).map((x) => '· ' + String(x.title || x.bvid).slice(0, 26) + ' —— ' + String(x.reason || '').slice(0, 30)),
+      ]
+      pushToDshSession(hostCtx, { home, text: buildReportPrompt(lines), cwd: home })
+        .then((r) => { dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }; if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error) })
+        .catch(() => {})
+    } catch { /* 投递失败不影响跑轮 */ }
+  }
   let dshApi = null
   let asrInfo = { ready: false, mode: 'local', reason: '还没检测' }
   let asrInfoAt = 0
@@ -481,17 +495,7 @@ export function apply(ctx, _config) {
           await ensureVenv(cfg, home, (m) => logLine(home, m))
           const s = await runRound({ home, force, dryRun, shouldStop: () => stopRequested, hostModels: extractHostModels(), log: (m) => logLine(home, m) }); logLine(home, `手动轮次：${JSON.stringify(s)}`)
             // 开了「发进 DSH 会话」就把这轮小结投过去（异步，不挡返回）
-            try {
-              if (loadConfig(home).dshSession) {
-                const lines = [
-                  '搜到 ' + (s.scanned || 0) + ' 条，挑中 ' + (s.picked || 0) + ' 条，' + (s.dryRun ? '试跑没发出去' : ('发了 ' + (s.posted || 0) + ' 条评论')),
-                  ...(s.items || []).filter((x) => x.grade === '值得看' || x.grade === '可以看').slice(0, 5).map((x) => '· ' + String(x.title || x.bvid).slice(0, 26) + ' —— ' + String(x.reason || '').slice(0, 30)),
-                ]
-                pushToDshSession(hostCtx, { home, text: buildReportPrompt(lines), cwd: home })
-                  .then((r) => { dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }; if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error) })
-                  .catch(() => {})
-              }
-            } catch { /* 投递失败不影响跑轮 */ }
+            await maybePushRound(home, s)
         }
         catch (e) { logLine(home, `手动轮次异常：${e?.message || e}`) }
         finally { roundRunning = false }
@@ -565,12 +569,13 @@ export function apply(ctx, _config) {
       const c = loadConfig(home)
       const stt = loadState(home)
       const login = loginStatus(home)
+      const vst = venvStatus(home)
       return sendJson(res, 200, {
         ok: true,
         config: safeSettings(c),
         loggedIn: Boolean(login.loggedIn),
-        venv: venvStatus(home),
-        venvReady: (() => { const v = venvStatus(home); return Boolean(v.venvReady || v.baseWithDeps) })(),
+        venv: vst,
+        venvReady: Boolean(vst.venvReady || vst.baseWithDeps),
         mcpServerExists: BiliMcp.serverExists(),
         version: VERSION || '0.0.0',
         pickedToday: stt.picked || 0,
@@ -669,7 +674,7 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message ?? e) }) }
     }
     if (req.method === 'GET' && path === '/env/diag') {
-      try { return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
+      try { clearReady(home); return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
       catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     if (req.method === 'GET' && path === '/selfcheck') {
@@ -784,7 +789,7 @@ export function apply(ctx, _config) {
           roundRunning = true
           stopRequested = false
           roundLabel = '定时值守'
-          try { const s = await runRound({ home, force: false, shouldStop: () => stopRequested, hostModels: extractHostModels(), log: (m) => logLine(home, m) }); logLine(home, `定时轮次：${JSON.stringify(s)}`) }
+          try { const s = await runRound({ home, force: false, shouldStop: () => stopRequested, hostModels: extractHostModels(), log: (m) => logLine(home, m) }); logLine(home, `定时轮次：${JSON.stringify(s)}`); await maybePushRound(home, s) }
           catch (e) { logLine(home, `定时轮次异常：${e?.message || e}`) }
           finally { roundRunning = false }
         } catch (e) { log(`值守调度异常：${e?.message || e}`) }
