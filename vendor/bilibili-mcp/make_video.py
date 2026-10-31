@@ -110,57 +110,200 @@ def load_bg(path, W, H):
         return None
 
 
+import unicodedata
+
+
+def clean_text(t):
+    """去掉 emoji 与各类"字库里没有"的符号（2026-11-1）。
+    为什么：中文字体（msyh/Noto CJK）里没有彩色 emoji 字形，画出来就是一个空心方框，
+    用户看到的是「耳朵要聋了▯」。emoji 表现力交给文字本身，别硬画。"""
+    out = []
+    for ch in str(t or ''):
+        cp = ord(ch)
+        # 常见 emoji / 符号区
+        if (0x1F000 <= cp <= 0x1FAFF) or (0x2600 <= cp <= 0x27BF) or (0x1F1E6 <= cp <= 0x1F1FF):
+            continue
+        if cp in (0xFE0F, 0x200D, 0x20E3, 0xFE0E):      # 变体选择符/零宽连接
+            continue
+        if 0x2190 <= cp <= 0x21FF:                       # 箭头（字体常缺）
+            continue
+        cat = unicodedata.category(ch)
+        if cat in ('So', 'Sk', 'Cs', 'Co', 'Cn'):        # 其它图片符号/修饰符/私用区
+            continue
+        out.append(ch)
+    s2 = ''.join(out)
+    # 收尾清理：多余空格、连续标点
+    while '  ' in s2:
+        s2 = s2.replace('  ', ' ')
+    return s2.strip()
+
+
+def _fit_font(font_path, text, max_w, draw, start=86, min_size=34):
+    """按可用宽度自动挑字号，避免长标题挤成一团或溢出"""
+    from PIL import ImageFont
+    size = start
+    while size > min_size:
+        try:
+            f = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
+        except Exception:
+            return None, size
+        try:
+            w = draw.textlength(text, font=f)
+        except Exception:
+            w = len(text) * size
+        if w <= max_w:
+            return f, size
+        size -= 4
+    try:
+        return (ImageFont.truetype(font_path, min_size) if font_path else ImageFont.load_default()), min_size
+    except Exception:
+        return None, min_size
+
+
 def render_card(card, idx, total, W, H, font_path):
+    """返回 (底图, 文字层)。文字层单独一层是为了做淡入动画（不用每帧重排文字）。"""
     from PIL import Image, ImageDraw, ImageFont
+
+    title = clean_text(card.get('title') or '')
+    body = [clean_text(x) for x in (card.get('lines') or []) if clean_text(x)]
+
+    # ── 底图：有素材图就用，没有就画渐变（纯黑太呆）
     bg = load_bg(card.get('bg') or '', W, H)
     if bg is not None:
-        img = bg.copy()
-        # 压暗一层，保证白字可读（0=solid, 255=transparent）
-        ov = Image.new('RGBA', (W, H), (8, 10, 14, 168))
-        img = Image.alpha_composite(img.convert('RGBA'), ov).convert('RGB')
+        base = bg.convert('RGBA')
+        ov = Image.new('RGBA', (W, H), (8, 10, 14, 176))
+        base = Image.alpha_composite(base, ov)
     else:
-        img = Image.new('RGB', (W, H), (15, 17, 21))
-    d = ImageDraw.Draw(img)
-    # 左侧强调条
-    d.rectangle([0, 0, 10, H], fill=(64, 158, 255))
-    # 顶部小字：系列序号
+        base = Image.new('RGBA', (W, H), (0, 0, 0, 255))
+        px = base.load()
+        for y in range(H):
+            t = y / max(1, H - 1)
+            r = int(14 + 16 * t)
+            g = int(17 + 18 * t)
+            b = int(24 + 26 * t)
+            for x in range(0, W):
+                px[x, y] = (r, g, b, 255)
+
+    d0 = ImageDraw.Draw(base)
+    accent = (64, 158, 255)
+    # 装饰：左侧竖条 + 底部细线（保留一点品牌感）
+    d0.rectangle([0, 0, 10, H], fill=accent)
+
+    layer = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
     try:
         f_small = ImageFont.truetype(font_path, 26) if font_path else ImageFont.load_default()
-        d.text((48, 40), '第 %d / %d 页' % (idx + 1, total), font=f_small, fill=(120, 130, 145))
     except Exception:
-        pass
-    # 标题
-    title = str(card.get('title') or '').strip()
-    y = int(H * 0.22)
-    if title:
-        try:
-            f_title = ImageFont.truetype(font_path, 60) if font_path else ImageFont.load_default()
-        except Exception:
-            f_title = None
-        tlines = wrap_cjk(d, title, f_title, W - 140) if f_title else [title]
-        for ln in tlines[:2]:
-            d.text((70, y), ln, font=f_title, fill=(240, 244, 250))
-            y += 78
-        y += 18
-    # 正文
-    body = [str(x) for x in (card.get('lines') or []) if str(x).strip()]
-    try:
-        f_body = ImageFont.truetype(font_path, 38) if font_path else ImageFont.load_default()
-    except Exception:
-        f_body = None
-    max_lines = max(1, (H - y - 90) // 56)
-    used = 0
-    for para in body:
-        for ln in (wrap_cjk(d, para, f_body, W - 150) if f_body else [para]):
-            if used >= max_lines:
-                break
-            d.text((70, y), ln, font=f_body, fill=(205, 212, 222))
-            y += 56
-            used += 1
-        y += 8
-        if used >= max_lines:
-            break
-    return img
+        f_small = None
+
+    if f_small:
+        d.text((48, 38), '第 %d / %d 页' % (idx + 1, total), font=f_small, fill=(126, 136, 152, 255))
+
+    variant = idx % 5
+    pad = 80
+
+    if variant == 0 and title:
+        # ① 大标题居中 + 副标题
+        f_t, _sz = _fit_font(font_path, title, W - pad * 2, d, 96)
+        if f_t:
+            tl = wrap_cjk(d, title, f_t, W - pad * 2)
+            th = len(tl) * (_sz + 16)
+            y = int(H * 0.5 - th / 2) - 30
+            for ln in tl[:3]:
+                w = d.textlength(ln, font=f_t)
+                d.text(((W - w) / 2, y), ln, font=f_t, fill=(246, 249, 255, 255))
+                y += _sz + 16
+            d.rectangle([(W / 2 - 34), y + 34, (W / 2 + 34), y + 39], fill=accent + (255,))
+            y += 66
+            f_b = ImageFont.truetype(font_path, 40) if font_path else None
+            if f_b:
+                for para in body[:2]:
+                    for ln in wrap_cjk(d, para, f_b, W - pad * 2):
+                        w = d.textlength(ln, font=f_b)
+                        d.text(((W - w) / 2, y), ln, font=f_b, fill=(198, 207, 220, 255))
+                        y += 54
+                        if y > H - 70:
+                            break
+
+    elif variant == 1:
+        # ② 大编号 + 左对齐标题 + 分隔线
+        f_num = ImageFont.truetype(font_path, 130) if font_path else None
+        if f_num:
+            num = '%02d' % (idx + 1)
+            nw = d.textlength(num, font=f_num)
+            d.text((W - nw - 56, 70), num, font=f_num, fill=(38, 44, 56, 255))
+        y = int(H * 0.38)
+        tw = W - pad * 2 - 130        # 给右上角编号留位置，别让标题压上去
+        f_t, sz = _fit_font(font_path, title, tw, d, 76)
+        if f_t and title:
+            for ln in wrap_cjk(d, title, f_t, tw)[:2]:
+                d.text((pad, y), ln, font=f_t, fill=(246, 249, 255, 255))
+                y += sz + 10
+        y += 26
+        d.rectangle([pad, y, pad + 64, y + 5], fill=accent + (255,))
+        y += 30
+        f_b = ImageFont.truetype(font_path, 40) if font_path else None
+        if f_b:
+            for para in body[:3]:
+                for ln in wrap_cjk(d, para, f_b, W - pad * 2):
+                    if y > H - 80:
+                        break
+                    d.text((pad, y), ln, font=f_b, fill=(200, 209, 222, 255))
+                    y += 56
+
+    elif variant == 2 and title:
+        # ③ 金句：整句居中大字（标题+正文合成一句）
+        line = title if not body else (title + '，' + body[0])
+        f_t, sz = _fit_font(font_path, line, W - pad * 2, d, 82, 40)
+        if f_t:
+            tl = wrap_cjk(d, line, f_t, W - pad * 2)
+            th = len(tl) * (sz + 14)
+            y = int((H - th) / 2)
+            for ln in tl[:4]:
+                w = d.textlength(ln, font=f_t)
+                d.text(((W - w) / 2, y), ln, font=f_t, fill=(248, 250, 255, 255))
+                y += sz + 14
+
+    elif variant == 3:
+        # ④ 上下分层：上面大字标题，下面带「·」的列表
+        f_t, sz = _fit_font(font_path, title, W - pad * 2, d, 72)
+        y = 90
+        if f_t and title:
+            for ln in wrap_cjk(d, title, f_t, W - pad * 2)[:2]:
+                d.text((pad, y), ln, font=f_t, fill=(248, 250, 255, 255))
+                y += sz + 10
+        d.rectangle([pad, y + 16, W - pad, y + 19], fill=(58, 66, 80, 255))
+        y += 56
+        f_b = ImageFont.truetype(font_path, 38) if font_path else None
+        if f_b:
+            for para in body[:4]:
+                for ln in wrap_cjk(d, para, f_b, W - pad * 2 - 30):
+                    if y > H - 90:
+                        break
+                    d.ellipse([pad, y + 16, pad + 9, y + 25], fill=accent + (255,))
+                    d.text((pad + 26, y), ln, font=f_b, fill=(206, 214, 226, 255))
+                    y += 54
+
+    else:
+        # ⑤ 兜底：居中标题 + 正文
+        y = int(H * 0.34)
+        f_t, sz = _fit_font(font_path, title or ' ', W - pad * 2, d, 78)
+        if f_t and title:
+            for ln in wrap_cjk(d, title, f_t, W - pad * 2)[:2]:
+                w = d.textlength(ln, font=f_t)
+                d.text(((W - w) / 2, y), ln, font=f_t, fill=(246, 249, 255, 255))
+                y += sz + 12
+        y += 26
+        f_b = ImageFont.truetype(font_path, 40) if font_path else None
+        if f_b:
+            for para in body[:2]:
+                for ln in wrap_cjk(d, para, f_b, W - pad * 2):
+                    w = d.textlength(ln, font=f_b)
+                    d.text(((W - w) / 2, y), ln, font=f_b, fill=(202, 211, 224, 255))
+                    y += 56
+                    if y > H - 80:
+                        break
+    return base, layer
 
 
 def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%'):
@@ -240,7 +383,7 @@ def main():
     if voice.get('enabled'):
         texts = []
         for c in cards:
-            t = (str(c.get('title') or '') + '。' + '。'.join([str(x) for x in (c.get('lines') or [])])).strip()
+            t = clean_text(str(c.get('title') or '') + '。' + '。'.join([str(x) for x in (c.get('lines') or [])])).strip()
             texts.append(t or '（这一页没有文字）')
         progress(4)
         log('正在合成配音（免费 edge-tts，需联网）…')
@@ -345,12 +488,21 @@ def main():
     total_frames = sum(int(d * fps) for d in durs)
     done = 0
     try:
+        from PIL import Image
         for i, card in enumerate(cards):
-            img = render_card(card, i, len(cards), W, H, font_path)
-            rgb = img.tobytes()
+            base, layer = render_card(card, i, len(cards), W, H, font_path)
+            full = Image.alpha_composite(base, layer).convert('RGB')
             frames = max(1, int(durs[i] * fps))
-            for _ in range(frames):
-                proc.stdin.write(rgb)
+            fade = max(1, int(fps * 0.35))     # 0.35 秒淡入
+            for k in range(frames):
+                if k < fade:
+                    a = (k + 1) / fade
+                    ov = layer.copy()
+                    ov.putalpha(ov.getchannel('A').point(lambda v: int(v * a)))
+                    img = Image.alpha_composite(base, ov).convert('RGB')
+                    proc.stdin.write(img.tobytes())
+                else:
+                    proc.stdin.write(full.tobytes())
                 done += 1
                 if done % max(1, fps * 2) == 0:
                     progress(15 + int(80 * done / max(1, total_frames)))
