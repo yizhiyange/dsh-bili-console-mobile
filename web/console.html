@@ -705,7 +705,7 @@ img.avatar{border:1px solid var(--line);}
       '<button class="btn ghost sm" data-act="clearmem">清空所有上下文</button></div>' +
       toggleRow('关掉模型思考', '省 token：能关的直接关，关不掉的降到最低档', c.thinkingOff !== false, 'thinkingOff'));
 
-    var v = st().venv || {}, ready = !!st().venvReady;
+    var v = st().venv || {}, ready = !!(st().venvReady || v.baseWithDeps); /* venv 就绪 或 系统 Python 带依赖 都算（2026-10-31 修） */
     var env = card('运行环境', '依赖插件自己装，不用你手动 pip', '',
       setRow('Python 依赖', ready ? ('已就绪 · ' + (v.venvPath || v.baseWithDeps || '系统 Python'))
         : (v.basePython ? ('有 Python，但还没装依赖：' + v.basePython) : '没检测到 Python 3（需要 3.10+）'),
