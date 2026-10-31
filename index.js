@@ -20,7 +20,7 @@
  *   - 模型降级链（lib/chain.mjs + lib/llm.mjs）：配额/NO_ADAPTER → 自动跳下一节
  * ============================================================================
  */
-import { appendFileSync, existsSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
@@ -259,9 +259,31 @@ function readBody(req) {
   })
 }
 
+/**
+ * duty.log 磁盘裁剪（2026-11-1 加，省内存/省磁盘）
+ * 之前这个日志是**只写不删**，跑久了会一直涨（本机已经 704 行、越攒越多）。
+ * 现在每写 50 条检查一次，超过 MAX_LOG_LINES 就只留最后这么多，老日志丢掉。
+ */
+const MAX_LOG_LINES = 1200
+let _logWrites = 0
+function trimLog(home) {
+  if (++_logWrites < 50) return
+  _logWrites = 0
+  try {
+    const p = join(home, 'duty.log')
+    if (!existsSync(p)) return
+    const st = statSync(p)
+    if (st.size < 80 * 1024) return            // 小于 80KB 不用动，省一次 IO（本机日志约 67KB 时已接近）
+    const lines = readFileSync(p, 'utf8').split('\n')
+    if (lines.length <= MAX_LOG_LINES) return
+    writeFileSync(p, lines.slice(-MAX_LOG_LINES).join('\n'))
+  } catch { /* 裁剪失败无所谓，下次再试 */ }
+}
+
 function logLine(home, msg) {
   try {
     appendFileSync(join(home, 'duty.log'), `${new Date().toISOString()}  ${msg}\n`)
+    try { trimLog(home) } catch { /* 裁剪失败不影响主流程 */ }
   } catch { /* 日志写不出不致命 */ }
 }
 
@@ -466,8 +488,12 @@ export function apply(ctx, _config) {
     if (req.method === 'GET' && path === '/rawlog') {
       let lines = []
       try {
+        // 省内存（2026-11-1）：原来每次轮询都固定回 240 行，手机上这份 JSON 又大又占内存，
+        // 省电模式只回 60 行（画面上够看最近十几条了），读文件也只读最后一段，不再整个读进来。
+        const c = loadConfig(home)
+        const maxLn = c.lowPower ? 60 : 240
         const text = readFileSync(join(home, 'duty.log'), 'utf8')
-        lines = tailLines(text, 240, 500000).map((ln) => {
+        lines = tailLines(text, maxLn, 500000).map((ln) => {
           const { t, msg } = parseLine(ln)
           return { t: t || '——', msg, lv: levelOf(msg) }
         })
