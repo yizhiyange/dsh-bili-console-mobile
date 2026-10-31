@@ -830,7 +830,7 @@ export function apply(ctx, _config) {
         }
         const out = await testImageGen(c)
         if (!out.ok) return sendJson(res, 200, { ok: false, error: out.error })
-        return sendJson(res, 200, { ok: true, model: c.videoImageModel, size: out.size })
+        return sendJson(res, 200, { ok: true, model: c.videoImageModel, size: out.size, dataUrl: out.dataUrl || '' })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
