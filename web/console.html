@@ -778,6 +778,10 @@ img.avatar{border:1px solid var(--line);}
             ['zh-CN-XiaoyiNeural', '晓伊（温柔女声）'], ['zh-CN-YunjianNeural', '云健（活力男声）'],
             ['zh-CN-liaoning-XiaobeiNeural', '晓北（东北口音女声）'], ['zh-CN-shaanxi-XiaoniNeural', '小妮（陕西口音女声）'], ['zh-CN-YunxiaNeural', '云夏（少年男声）']]))
         : '') +
+      (cg.videoVoice !== false ? setRow('语速', '微软原生支持，-30% 很慢 / +30% 很快', selectHTML('videoVoiceRate', cg.videoVoiceRate || '+0%', [['-30%', '-30% 很慢'], ['-15%', '-15% 稍慢'], ['+0%', '正常'], ['+15%', '+15% 稍快'], ['+30%', '+30% 很快']])) : '') +
+      (cg.videoVoice !== false ? setRow('音调', '负值更低沉，正值更清亮', selectHTML('videoVoicePitch', cg.videoVoicePitch || '+0Hz', [['-30Hz', '-30Hz 低沉'], ['-15Hz', '-15Hz 稍低'], ['+0Hz', '正常'], ['+15Hz', '+15Hz 稍高'], ['+30Hz', '+30Hz 清亮']])) : '') +
+      (cg.videoVoice !== false ? setRow('音量', '配音音量', selectHTML('videoVoiceVolume', cg.videoVoiceVolume || '+0%', [['-20%', '-20% 小声'], ['+0%', '正常'], ['+20%', '+20% 大声']])) : '') +
+      (cg.videoVoice !== false ? setRow('试听一下', '用上面这套配置念一句，听完再生成，省得白等', '<button class="btn" data-act="ttspreview">▶ 试听</button>') : '') +
       toggleRow('用 AI 写稿（模型的开关）', '这就是「关掉模型」的开关：关掉后完全不跑模型、不花 key，用当天刷到的标题拼合集', cg.videoUseAI !== false, 'videoUseAI') +
       setRow('清晰度', '默认 720p；1080p 更清楚但更慢；480p 会糊，只建议极端省电', selectHTML('videoQuality', cg.videoQuality || '720', [['720', '720p（默认）'], ['1080', '1080p'], ['480', '480p 省电']])) +
       setRow('视频卡片数（画面张数）', '指视频里翻页的文字画面有几张（PPT 页数），不是人格卡；人格卡自动沿用「人设」页的配置。越多越长；手机建议 4 张', stepperHTML('videoMaxCards', cg.videoMaxCards || 6, '张')) +
@@ -1091,6 +1095,14 @@ img.avatar{border:1px solid var(--line);}
       return post('/settings', patch).then(function (r) { toast(r.ok ? '已保存' : '保存失败'); drafting = {}; refresh(); });
     }
     if (act === 'reload') { drafting = {}; return refresh().then(function () { toast('已重新载入'); }); }
+    if (act === 'ttspreview') {
+      toast('正在合成…');
+      return post('/publish/tts-preview', {}).then(function (r) {
+        if (!r || !r.ok) return toast('试听失败：' + ((r && r.error) || '未知原因'));
+        var a = new Audio('data:audio/mpeg;base64,' + r.audio);
+        a.play().then(function () { toast('播放中'); }, function () { toast('浏览器不让自动播放，再点一次'); });
+      });
+    }
     if (act === 'rep') {
       var body = $('#rep-body'); if (!body) return;
       var open = body.style.maxHeight === 'none';
