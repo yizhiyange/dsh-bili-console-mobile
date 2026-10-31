@@ -723,6 +723,45 @@ window.__ModuleLoader__.load({
         return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { document.removeEventListener('visibilitychange', onVis) } catch {} }
       }, [!!(state?.settings?.lowPower)])
 
+      /**
+       * 从手机相册/文件里选素材，直接把文件内容传给插件。
+       * 为什么这么做：proot 里的目录和安卓文件管理器是两套世界，让用户"把文件放进某个路径"根本行不通；
+       * 直接用系统的文件选择器拿到文件本体，就绕开了路径问题（2026-11-1）。
+       */
+      const pickAndUploadAssets = async () => {
+        try {
+          const inp = document.createElement('input')
+          inp.type = 'file'
+          inp.multiple = true
+          inp.accept = 'image/*,audio/*'
+          inp.style.display = 'none'
+          document.body.appendChild(inp)
+          const chosen = await new Promise((resolve) => {
+            inp.onchange = () => resolve(Array.from(inp.files || []))
+            inp.oncancel = () => resolve([])
+            inp.click()
+          })
+          try { inp.remove() } catch { /* noop */ }
+          if (!chosen.length) return
+          toast_('正在上传 ' + chosen.length + ' 个…')
+          const files = []
+          for (const f of chosen.slice(0, 20)) {
+            const data = await new Promise((resolve) => {
+              const fr = new FileReader()
+              fr.onload = () => resolve(String(fr.result || ''))
+              fr.onerror = () => resolve('')
+              fr.readAsDataURL(f)
+            })
+            if (data) files.push({ name: f.name || ('素材' + files.length), data })
+          }
+          if (!files.length) return toast_('读不出文件内容')
+          const r = await jpost('/assets/upload', { files })
+          if (!r || !r.ok) return toast_('上传失败：' + ((r && r.error) || '未知原因'))
+          const n = (r.saved || []).length
+          toast_('已加进素材库 ' + n + ' 个' + ((r.skipped || []).length ? ('，跳过 ' + r.skipped.length + ' 个') : ''))
+          renderAssetsInto(r.items || [])
+        } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
+      }
       /** 把素材库导出到手机可见目录（proot 路径用户在文件管理器里看不到） */
       const exportAssets = async () => {
         try {
@@ -2317,7 +2356,8 @@ window.__ModuleLoader__.load({
               on: !!cfg.useAssets, onChange: (v) => saveOne('useAssets', v),
             }),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
-              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: exportAssets }, '📤 导出到手机（文件管理器能看见）'),
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: pickAndUploadAssets }, '📷 从相册/文件选素材'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: exportAssets }, '📤 导出到手机'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: importAssets }, '📥 从手机导入'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开插件内目录'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadAssets }, '刷新列表')),
