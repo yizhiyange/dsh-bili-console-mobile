@@ -26,7 +26,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import {
-  stateDirOf, ensureDir, loadConfig, saveConfig, loadState, parseSeen,
+  stateDirOf, ensureDir, loadConfig, saveConfig, loadState, saveState, parseSeen,
   readReport, dayKey, inWindow, WINDOWS,
 } from './lib/state.mjs'
 import { resolvePersona } from './lib/persona.mjs'
@@ -501,6 +501,19 @@ export function apply(ctx, _config) {
         })
       } catch { /* 没有日志 */ }
       return sendJson(res, 200, { ok: true, lines })
+    }
+    // 重置今天已用额度（用户 2026-11-1 要求：不想改上限、就是想清零重来）
+    if (req.method === 'POST' && path === '/quota/reset') {
+      try {
+        const st = loadState(home)
+        const before = { day: st.day, count: Number(st.count) || 0, picked: Number(st.picked) || 0 }
+        st.day = dayKey()
+        st.count = 0
+        st.picked = 0
+        saveState(home, st)
+        logLine(home, `手动重置今日额度：清零前 挑了 ${before.picked} 条 / 发了 ${before.count} 条`)
+        return sendJson(res, 200, { ok: true, before, now: { day: st.day, count: 0, picked: 0 } })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 一把清空每条视频的上下文（thread 模式才会产生）
     if (req.method === 'POST' && path === '/memory/clear') {
