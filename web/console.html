@@ -192,6 +192,28 @@ img.avatar{border:1px solid var(--line);}
   .main{flex-direction:column;}
   .row-flex > .card{min-width:100%;}
 }
+
+/* ===== 手机档（≤600px）：只影响手机/极窄窗口，电脑上的样子一个像素不变 =====
+   用户反馈（2026-10-31）：手机浏览器里打开显得字小、顶栏挤。
+   原因：整页按电脑标准排（正文 14px、搜索框固定 260px），手机屏根本装不下顶栏。
+   做法：字号加大一档、顶栏允许折行（搜索框独占一行）、卡片和导航加高好点按。 */
+@media (max-width:600px){
+  body{font-size:15.5px;}
+  .window{padding:10px;gap:10px;}
+  .topbar{height:auto;min-height:48px;flex-wrap:wrap;padding:8px 12px;row-gap:6px;}
+  .brand{font-size:15px;}
+  .search{margin-left:0;order:3;width:100%;}
+  .spill{margin-left:auto;font-size:12.5px;}
+  .banner{font-size:13px;}
+  .card{padding:14px;border-radius:10px;}
+  .sidebar{gap:6px;}
+  .pill{height:40px;font-size:14px;border-radius:20px;}
+  .btn{min-height:38px;}
+  #login img{width:180px;height:180px;}
+  /* 这两处页面里有内联 font-size:13px，手机上统一放大 */
+  textarea{font-size:15px !important;}
+  input,select{font-size:15px !important;}
+}
 </style>
 </head>
 <body>
