@@ -43,6 +43,8 @@ import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pyenv.mjs'
+// 一键安装运行环境（Python / 依赖 / 转写后端），带进度
+import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
@@ -246,6 +248,7 @@ export function apply(ctx, _config) {
       pkg: PKG_NAME || '',
       update: snapshot(VERSION || '0.0.0'),
       selfUpdate: selfUpdateSnapshot(),
+      envJob: envJobSnapshot(),
       haveYaml: true,
       safeMode, noAdapter: false,
       status: { phase: '值守中', label: guardian.active() ? '风控冷却中' : '控制台在线', tone: guardian.active() ? 'warn' : 'ok' },
@@ -559,6 +562,15 @@ export function apply(ctx, _config) {
       return sendJson(res, 200, { ok: true, text })
     }
     // 环境自检：把"试了哪些 Python、找到没有、venv 什么状态"全摊开（界面上点「重新检测」调它）
+    // 一键安装运行环境：python / deps / asr（进度看 /state 的 envJob）
+    if (req.method === 'POST' && path === '/env/install') {
+      const b = await readBody(req)
+      const r = startEnvJob({ kind: String(b.what || 'deps'), cfg: loadConfig(home), home })
+      return sendJson(res, 200, { ok: true, ...r })
+    }
+    if (req.method === 'GET' && path === '/env/job') {
+      return sendJson(res, 200, { ok: true, ...envJobSnapshot() })
+    }
     if (req.method === 'GET' && path === '/env/diag') {
       try { return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
       catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
