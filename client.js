@@ -544,6 +544,7 @@ window.__ModuleLoader__.load({
       const [chatText, setChatText] = React.useState('')
       const [chatBusy, setChatBusy] = React.useState(false)
       const [asrCheck, setAsrCheck] = React.useState(null)
+      const [dshTesting, setDshTesting] = React.useState(false)
       const [asrChecking, setAsrChecking] = React.useState(false)
       const [newKw, setNewKw] = React.useState('')
       // 设置页纯文本/数字输入：用本地草稿，避免被 2 秒轮询的 state 覆盖（与 keyword/persona 同策略）
@@ -840,6 +841,15 @@ window.__ModuleLoader__.load({
           if (r && r.found) toast_('找到 Python：' + r.found.cmd + '（' + r.found.ver + '）')
           else toast_('还是没找到 Python，下面列出了试过的每个路径')
         } catch (e) { toast_('检测失败：' + String(e?.message ?? e)) } finally { setEnvBusy(false) }
+      }
+      /** 试验：把一句话投进 DSH 会话，验证接口通不通 */
+      const testDshPush = async () => {
+        setDshTesting(true)
+        try {
+          const r = await jpost('/dsh/push', {})
+          if (r && r.ok) toast_('已写进 DSH 会话（去会话列表看 bili-console）')
+          else toast_('没成功（' + ((r && r.stage) || '') + '）：' + ((r && r.error) || '未知'))
+        } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } finally { setDshTesting(false) }
       }
       /** 对话页：拉历史 / 发一句 / 清空 */
       const loadChatMsgs = async () => {
@@ -1601,6 +1611,18 @@ window.__ModuleLoader__.load({
                   onClick: recheckEnv,
                 }, envBusy ? '检测中…' : '重新检测'))),
             envJobView(['auto', 'deps', 'python']),
+            ToggleRow({
+              label: '把每轮小结发进 DSH 会话（试验）',
+              note: '开着的话，跑完一轮会在 DSH 会话列表里留一条记录（会话名 bili-console）。DSH 没开放该接口时会失败——失败只记日志，不影响跑轮',
+              on: !!cfg.dshSession, onChange: (v) => saveOne('dshSession', v),
+            }),
+            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: dshTesting, onClick: testDshPush },
+                dshTesting ? '发送中…' : '试一下'),
+              st.dshPush && st.dshPush.at ? h('span', {
+                'data-bd-ds': '',
+                style: { fontSize: '12px', color: st.dshPush.ok ? 'var(--green-tx)' : 'var(--red-tx)' },
+              }, st.dshPush.ok ? '✓ 上一条已写进 DSH 会话' : ('✗ ' + (st.dshPush.stage || '') + '：' + (st.dshPush.error || ''))) : null),
             st.dshApi ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
               h('div', { style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } },
                 h('div', null, 'DSH 给插件开放的接口（只读探测）：'),
