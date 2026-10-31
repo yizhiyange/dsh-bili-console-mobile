@@ -38,6 +38,7 @@ import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
+import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -357,6 +358,102 @@ function trimLog(home) {
     if (lines.length <= MAX_LOG_LINES) return
     writeFileSync(p, lines.slice(-MAX_LOG_LINES).join('\n'))
   } catch { /* 裁剪失败无所谓，下次再试 */ }
+}
+
+/**
+ * 助手能调的工具（白名单，2026-11-1）
+ * 为什么走白名单：模型可能被诱导去"删配置""发几百条评论"，这里只放安全动作，
+ * 涉及真发评论的必须 confirm=true（前端会先弹确认再重发）。
+ */
+const ASSIST_KEYS = new Set([
+  'perDay', 'commentPerRound', 'autoComment', 'dmMode', 'replyToComments', 'useHomeFeed', 'useKeywordSearch',
+  'keywords', 'videoVoice', 'videoVoiceName', 'videoVoiceRate', 'videoVoicePitch', 'videoLayout',
+  'videoCogVideo', 'videoCogVideoMode', 'videoImageEnabled', 'thinkLevel', 'mentionName', 'mentionMode',
+  'lowPower', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
+])
+
+async function runAssistantTool(home, tool, args, ctx = {}) {
+  const c = loadConfig(home)
+  switch (tool) {
+    case 'getSettings': {
+      const st = loadState(home)
+      return {
+        ok: true,
+        data: {
+          每日上限: c.perDay, 每轮最多评论: c.commentPerRound, 自动评论: !!c.autoComment,
+          私信: c.dmMode || 'off', 今日已用: Math.max(Number(st.picked) || 0, Number(st.count) || 0),
+          画面版式: c.videoLayout || 'auto', 开场动态: !!c.videoCogVideo,
+          思考强度: c.thinkLevel || 'off', 素材参与: !!c.useAssets,
+        },
+      }
+    }
+    case 'setSetting': {
+      const key = String(args.key || '')
+      if (!ASSIST_KEYS.has(key)) return { ok: false, error: '这个设置项不允许通过助手改：' + key }
+      let value = args.value
+      if (key === 'keywords' && typeof value === 'string') value = value.split(/[,，\s]+/).filter(Boolean)
+      saveConfig(home, { ...c, [key]: value })
+      logLine(home, '助手改设置：' + key + ' = ' + JSON.stringify(value).slice(0, 60))
+      return { ok: true, note: key + ' → ' + JSON.stringify(value) }
+    }
+    case 'setModelStrength': {
+      const model = String(args.model || '')
+      const level = String(args.level || '')
+      if (!model) return { ok: false, error: '没说要改哪个模型' }
+      const map = { ...(c.chainStrength || {}) }
+      const eps = buildEndpoints(c, extractHostModels())
+      const hit = eps.find((e) => e.id === model || e.label === model || e.model === model)
+      if (!hit) return { ok: false, error: '没找到这个模型：' + model }
+      if (level) map[hit.id] = level
+      else delete map[hit.id]
+      saveConfig(home, { ...c, chainStrength: map })
+      return { ok: true, note: (hit.label || hit.model) + ' 思考强度 → ' + (level || '跟随全局') }
+    }
+    case 'resetQuota': {
+      const st = loadState(home)
+      st.day = dayKey(); st.count = 0; st.picked = 0
+      saveState(home, st)
+      logLine(home, '助手重置今日额度')
+      return { ok: true, note: '今日额度已清零' }
+    }
+    case 'analyzeAssets': {
+      const py = resolvePython(c, home) || 'python3'
+      const script = join(SELF_ROOT, 'vendor', 'bilibili-mcp', 'analyze_audio.py')
+      const dir = join(home, 'assets')
+      const items = listAssets(home)
+      let n = 0
+      for (const it of items) {
+        if (it.kind !== 'audio' || String(it.note || '').trim()) continue
+        const r = await runPy(py, [script, join(dir, it.file)])
+        const line = String((r.stdout || '').trim()).split('\n').pop()
+        if (r.ok && line && !/失败|不存在|读不出/.test(line)) n++
+      }
+      return { ok: true, note: '识别了 ' + n + ' 个音频（在素材库里看备注）' }
+    }
+    case 'autoNoteAssets': {
+      const vm = c.visionModel || {}
+      if (!vm.apiUrl || !vm.modelName || !vm.apiKey) return { ok: false, error: '识图模型没配全，先在素材库那里填好' }
+      return { ok: true, note: '请在素材库点「🤖 AI 帮我写备注」（批量识图较慢，放界面里跑更稳）' }
+    }
+    case 'clearVideos': {
+      const d = join(home, '.video')
+      let n = 0
+      if (existsSync(d)) for (const f of readdirSync(d)) { if (f.endsWith('.mp4')) { try { rmSync(join(d, f), { force: true }); n++ } catch { /* skip */ } } }
+      return { ok: true, note: '删了 ' + n + ' 个视频' }
+    }
+    case 'runRound': {
+      const mode = String(args.mode || 'dry')
+      if (mode === 'real' && ctx.confirm !== true) {
+        return { ok: false, needConfirm: true, error: '真要发评论的话，需要你点一下确认' }
+      }
+      return { ok: false, error: '跑轮需要在界面上点「立即跑」按钮（这里先不做，避免重复触发）' }
+    }
+    case 'generateVideo': {
+      return { ok: false, error: '生成视频请在发布页点「生成视频」（避免和正在跑的任务冲突）' }
+    }
+    default:
+      return { ok: false, error: '不认识这个工具：' + tool }
+  }
 }
 
 const SELF_ROOT = dirname(fileURLToPath(import.meta.url))
@@ -854,7 +951,47 @@ export function apply(ctx, _config) {
         return sendJson(res, 200, { ok: true, name, size })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
-    // 运行小结（插件自己的时间线，不依赖 DSH 会话）
+    // 助手会话：模型输出动作，这里白名单执行（2026-11-1）
+    if (req.method === 'POST' && path === '/assistant/chat') {
+      try {
+        const b = await readBody(req)
+        const text = String(b.text || '').trim()
+        if (!text) return sendJson(res, 200, { ok: false, error: '说点什么' })
+        const c = loadConfig(home)
+        const chain = buildEndpoints(c, extractHostModels())
+        if (!chain.length) return sendJson(res, 200, { ok: false, error: '链上空：先去「模型与密钥」加一个能对话的模型' })
+        const st = loadState(home)
+        const q = Math.max(Number(st.picked) || 0, Number(st.count) || 0)
+        const brief = [
+          '模型链：' + chain.slice(0, 3).map((e) => e.label || e.model).join(' → '),
+          '每日上限 ' + (c.perDay || 0) + ' 条，已用 ' + q + ' 条',
+          '自动评论：' + (c.autoComment ? '开' : '关') + '；私信：' + (c.dmMode || 'off'),
+          '画面版式：' + (c.videoLayout || 'auto') + '；开场：' + (c.videoCogVideo ? (c.videoCogVideoMode || 'local') : '关'),
+          '思考强度全局：' + (c.thinkLevel || 'off'),
+        ].join('；')
+        const r = await chat(chain, {
+          system: buildSystemPrompt(brief),
+          user: text,
+          maxTokens: 700,
+          temperature: 0.3,
+          thinkingOff: false,
+          level: 'low',
+        })
+        if (!r.ok) return sendJson(res, 200, { ok: false, error: r.lastError || '模型调用失败' })
+        const { say, actions } = parseAssistant(r.text)
+
+        // 白名单执行
+        const results = []
+        for (const a of actions.slice(0, 6)) {
+          try {
+            const out = await runAssistantTool(home, a.tool, a.args || {}, { c, chain, confirm: b.confirm === true })
+            results.push({ tool: a.tool, ...out })
+          } catch (e) { results.push({ tool: a.tool, ok: false, error: String(e?.message || e).slice(0, 120) }) }
+        }
+        return sendJson(res, 200, { ok: true, say: say || '（没说话）', results })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 运行小结（插件自己的时间线，不依赖 DSH 会话）    // 运行小结（插件自己的时间线，不依赖 DSH 会话）
     if (req.method === 'GET' && path === '/runs') {
       try {
         const limit = Number(new URL(req.url, 'http://x').searchParams.get('limit') || 30)
