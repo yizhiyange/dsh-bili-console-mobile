@@ -22,7 +22,7 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-bili-console-mobile',
+  id: 'dsh-bili-console',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -182,7 +182,7 @@ window.__ModuleLoader__.load({
     [data-bd-logline] .lv{width:48px;flex-shrink:0;font-size:10px;font-weight:700;font-family:ui-monospace,Consolas,monospace;}
     [data-bd-logline] .msg{color:var(--t1);word-break:break-all;}
     .lv.INFO{color:var(--green-tx);} .lv.WARN{color:var(--amber-tx);} .lv.ERROR{color:var(--red-tx);}
-    [data-bd-logbox]{max-height:520px;overflow-y:auto;} [data-bd-logbox]::-webkit-scrollbar{width:6px;} [data-bd-logbox]::-webkit-scrollbar-thumb{background:var(--off);border-radius:3px;}
+    [data-bd-logbox]{max-height:520px;overflow-y:auto;} [data-bd-logbox]::-webkit-scrollbar{width:12px;} [data-bd-logbox]::-webkit-scrollbar-thumb{background:var(--off);border:4px solid transparent;border-radius:6px;background-clip:padding-box;}
     [data-bd-filters]{display:flex;gap:6px;} [data-bd-filters] .f{padding:3px 10px;border-radius:11px;font-size:11px;background:var(--gray-bg);color:var(--t2);}
     [data-bd-filters] .f.on{background:var(--blue);color:#fff;}
 
@@ -245,6 +245,13 @@ window.__ModuleLoader__.load({
     .narrow [data-bd-floatsave]{right:10px;bottom:96px;gap:8px;padding:7px 10px;}
     /* 浮动保存条出现时，给内容底部留出空间，避免盖住最后几行设置 */
     [data-bd-page].has-floatsave [data-bd-content]{padding-bottom:80px;}
+    /* ===== 电脑上更好滚（2026-10-31）：滚动条"可抓面积"加大一倍多（外观粗细不变）+ 按住内容拖动即可滚屏 ===== */
+    body.bd-grabbing,body.bd-grabbing *{cursor:grabbing !important;}
+    body.bd-grabbing *{user-select:none !important;}
+    ::-webkit-scrollbar{width:14px;height:14px;}
+    ::-webkit-scrollbar-thumb{background:rgba(127,134,147,.45);border:4px solid transparent;border-radius:7px;background-clip:padding-box;}
+    ::-webkit-scrollbar-thumb:hover{background:rgba(127,134,147,.8);border:4px solid transparent;border-radius:7px;background-clip:padding-box;}
+    ::-webkit-scrollbar-corner{background:transparent;}
     /* 评论记录条目 */
     [data-bd-cmt]{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;}
     [data-bd-cmt] .t{font-size:12.5px;font-weight:600;color:var(--t1);}
@@ -292,8 +299,8 @@ window.__ModuleLoader__.load({
     .narrow [data-bd-main]{flex-direction:column;gap:10px;}
     .narrow [data-bd-sidebar]{width:100%;position:static;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;
       padding:8px;gap:6px;align-items:center;}
-    .narrow [data-bd-sidebar]::-webkit-scrollbar{height:5px;}
-    .narrow [data-bd-sidebar]::-webkit-scrollbar-thumb{background:var(--off);border-radius:3px;}
+    .narrow [data-bd-sidebar]::-webkit-scrollbar{height:12px;}
+    .narrow [data-bd-sidebar]::-webkit-scrollbar-thumb{background:var(--off);border:4px solid transparent;border-radius:6px;background-clip:padding-box;}
     .narrow [data-bd-sidebar] [data-bd-pill]{width:auto;flex:none;white-space:nowrap;padding:0 14px;}
     .narrow [data-bd-spacer],.narrow [data-bd-modecard]{display:none;}
     .narrow [data-bd-sidebar] [data-bd-pill].switch{display:none;} /* 顶栏已有「网页版 ↗」，不重复 */
@@ -805,6 +812,63 @@ window.__ModuleLoader__.load({
           setWebUrl(url); setWebOpen(true)
         } catch { toast_('打开失败，请手动在浏览器打开 /bili-console') }
       }
+      /** 电脑上「按住内容拖一下」就能滚屏（像手机那样），不用再去抓那条细滚动条。
+       *  规矩：只对鼠标生效（触屏自己会滚，手机不受影响）；按在输入框/下拉框/文本域上不劫持；
+       *  按在按钮和导航（比如「模型与密钥」）上也能拖——拖了就当滚屏，松手那次点击会被吞掉，
+       *  轻点一下仍然是正常点击；拖超过 6px 才算拖。想选字复制：按住 Shift 再拖。 */
+      React.useEffect(() => {
+        try {
+          if (window.__bdDragScroll) return
+          window.__bdDragScroll = true
+          const SKIP = 'input,textarea,select,[contenteditable="true"]'
+          let down = null, dragging = false, last = null, scroller = null, suppressUntil = 0
+          const findScroller = (el) => {
+            let n = el
+            while (n && n !== document.body) {
+              try {
+                if (n.scrollHeight > n.clientHeight + 2 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n
+              } catch { /* noop */ }
+              n = n.parentElement
+            }
+            return document.scrollingElement || document.documentElement
+          }
+          const stop = () => {
+            if (dragging) suppressUntil = Date.now() + 250
+            document.body.classList.remove('bd-grabbing')
+            down = null; dragging = false; scroller = null
+          }
+          document.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'touch' || e.pointerType === 'pen' || !e.isPrimary) return
+            if (e.button !== 0 || e.shiftKey) return
+            const t = e.target
+            if (!t || !t.closest || !t.closest('[data-bd-page]')) return
+            if (t.closest(SKIP)) return
+            down = { x: e.clientX, y: e.clientY, id: e.pointerId }
+            last = { x: e.clientX, y: e.clientY }
+            dragging = false; scroller = null
+          }, true)
+          document.addEventListener('pointermove', (e) => {
+            if (!down || e.pointerId !== down.id) return
+            if (e.buttons === 0) { stop(); return }
+            const dx = e.clientX - last.x, dy = e.clientY - last.y
+            if (!dragging) {
+              if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) return
+              dragging = true
+              scroller = findScroller(e.target)
+              try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
+              document.body.classList.add('bd-grabbing')
+            }
+            last = { x: e.clientX, y: e.clientY }
+            if (scroller) { scroller.scrollTop -= dy; scroller.scrollLeft -= dx }
+          }, true)
+          document.addEventListener('pointerup', stop, true)
+          document.addEventListener('pointercancel', stop, true)
+          document.addEventListener('click', (e) => {
+            if (Date.now() < suppressUntil) { e.stopPropagation(); e.preventDefault() }
+          }, true)
+        } catch { /* 探测失败就不启用，不影响别的功能 */ }
+      }, [])
+
       /** 打开评论所在的视频：手机先试 B站 App（没装自动落网页版），电脑直接系统浏览器进网页版 */
       const openVideo = async (bvid) => {
         const web = 'https://www.bilibili.com/video/' + bvid
@@ -1050,7 +1114,7 @@ window.__ModuleLoader__.load({
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
         h('div', { 'data-bd-spacer': '' }),
-        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
+        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
       const renderComments = () => {
@@ -1796,10 +1860,10 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         const style = document.createElement('style')
-        style.setAttribute('data-plugin-css', 'dsh-bili-console-mobile')
+        style.setAttribute('data-plugin-css', 'dsh-bili-console')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-bili-console-mobile: 控制台样式')
+        ctx.effect(() => () => style.remove(), 'dsh-bili-console: 控制台样式')
 
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
