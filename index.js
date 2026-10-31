@@ -87,6 +87,7 @@ export const Config = !z ? undefined : z.object({
   chainStrength: z.any().default({}).extra('volatile', true),
   thinkLevel: z.string().default('off').extra('volatile', true),
   videoCogVideo: z.boolean().default(false).extra('volatile', true),
+  videoCogVideoMode: z.string().default('local').extra('volatile', true),
   videoCogVideoModel: z.string().default('cogvideox-flash').extra('volatile', true),
   videoCogVideoBaseUrl: z.string().default('').extra('volatile', true),
   videoCogVideoKey: z.string().default('').extra('volatile', true),
