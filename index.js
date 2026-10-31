@@ -86,6 +86,8 @@ export const Config = !z ? undefined : z.object({
   videoVoice: z.boolean().default(true).extra('volatile', true),
   chainStrength: z.any().default({}).extra('volatile', true),
   thinkLevel: z.string().default('off').extra('volatile', true),
+  videoCogVideo: z.boolean().default(false).extra('volatile', true),
+  videoCogVideoModel: z.string().default('cogvideox-flash').extra('volatile', true),
   videoLayout: z.string().default('auto').extra('volatile', true),
   videoTtsEngine: z.string().default('edge').extra('volatile', true),
   videoTtsUrl: z.string().default('').extra('volatile', true),
