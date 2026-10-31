@@ -37,6 +37,7 @@ import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
+import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -423,6 +424,8 @@ export function apply(ctx, _config) {
   /** 开了「发进 DSH 会话」就把这一轮小结投过去（手动轮 / 定时轮共用；异步，不挡返回，失败只记日志） */
   async function maybePushRound(home, s) {
     try {
+      // 本地记账：永远都记（不依赖宿主接口，2026-11-1）
+      try { appendRun(home, s) } catch { /* 记不上也不影响跑轮 */ }
       if (!loadConfig(home).dshSession) return
       const lines = [
         '搜到 ' + (s.scanned || 0) + ' 条，挑中 ' + (s.picked || 0) + ' 条，' + (s.dryRun ? '试跑没发出去' : ('发了 ' + (s.posted || 0) + ' 条评论')),
@@ -850,6 +853,16 @@ export function apply(ctx, _config) {
         const size = statSync(r.path).size
         return sendJson(res, 200, { ok: true, name, size })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 运行小结（插件自己的时间线，不依赖 DSH 会话）
+    if (req.method === 'GET' && path === '/runs') {
+      try {
+        const limit = Number(new URL(req.url, 'http://x').searchParams.get('limit') || 30)
+        return sendJson(res, 200, { ok: true, runs: listRuns(home, limit), stats: runStats(home) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    if (req.method === 'POST' && path === '/runs/clear') {
+      try { return sendJson(res, 200, { ok: clearRuns(home) }) } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
     if (req.method === 'GET' && path === '/video/preview') {
