@@ -37,7 +37,6 @@ import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { asrStatus, asrReadiness, asrDiag } from './lib/asr.mjs'
-import { visionReady } from './lib/vision.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -46,6 +45,7 @@ import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
 import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
 import { chat } from './lib/llm.mjs'
+import { describeImage, visionReady } from './lib/vision.mjs'
 import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
@@ -824,6 +824,39 @@ export function apply(ctx, _config) {
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
+    // 让 AI 看素材图，自动写「什么时候用」的备注（懒人救星，2026-11-1）
+    if (req.method === 'POST' && path === '/assets/auto-note') {
+      try {
+        const c = loadConfig(home)
+        if (!visionReady(c)) return sendJson(res, 200, { ok: false, error: '还没配识图模型：去「模型与密钥 → 识图模型」填一个，才能让 AI 看图写备注' })
+        const dir = join(home, 'assets')
+        const items = listAssets(home)
+        const out = []
+        let done = 0
+        for (const it of items) {
+          let note = it.note || ''
+          if (it.kind === 'image' && !String(note).trim()) {
+            try {
+              const p = join(dir, it.file)
+              const ext = (it.file.split('.').pop() || 'png').toLowerCase()
+              const mime = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg')
+              const buf = readFileSync(p)
+              if (buf.length <= 6 * 1024 * 1024) {
+                const dataUrl = 'data:' + mime + ';base64,' + buf.toString('base64')
+                const d = await describeImage(c, dataUrl, '这张图适合当视频背景吗？用一句 20 字以内的话说清画面内容和使用场景（例如“夜晚城市街道，讲加班时当背景”）。只回这句话。')
+                if (d.ok) note = String(d.text || '').trim().slice(0, 40)
+                done++
+              }
+            } catch { /* 单张失败跳过 */ }
+          }
+          if (!note) note = it.hint || ''
+          out.push({ file: it.file, note, kind: it.kind })
+        }
+        saveAssets(home, out)
+        logLine(home, `AI 自动写素材备注：处理 ${done} 张图`)
+        return sendJson(res, 200, { ok: true, updated: done, items: listAssets(home) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 上传素材（2026-11-1）：前端把相册/文件里选的图片、音频读成 base64 传过来，
     // 这里直接落进插件素材库。**彻底绕开文件管理器/proot 路径**，用户不用知道任何目录。
     if (req.method === 'POST' && path === '/assets/upload') {
