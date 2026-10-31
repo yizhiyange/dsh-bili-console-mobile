@@ -42,7 +42,7 @@ import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
-import { ensureVenv, venvStatus, resolvePython } from './lib/pyenv.mjs'
+import { ensureVenv, venvStatus, resolvePython, envDiagnostics } from './lib/pyenv.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
@@ -266,7 +266,17 @@ export function apply(ctx, _config) {
       memory: { mode: (cfgNow.contextMode === 'thread' ? 'thread' : 'isolated'), ...threadStats(home) },
       posted: postedStats(home),
       asr: { enabled: !!cfgNow.transcribe, model: cfgNow.asrModel || 'small', ready: !!asrInfo.ready, backend: asrInfo.backend || '', reason: asrInfo.reason || '' },
-      vision: { ready: visionReady(cfgNow), model: (cfgNow.visionModel || {}).modelName || '', url: (cfgNow.visionModel || {}).apiUrl || '' },
+      vision: {
+        ready: visionReady(cfgNow),
+        model: (cfgNow.visionModel || {}).modelName || '',
+        url: (cfgNow.visionModel || {}).apiUrl || '',
+        // 让人知道"沿用已存的 key"到底有没有 key（只给掩码，绝不回传明文）
+        hasKey: Boolean((cfgNow.visionModel || {}).apiKey),
+        keyHint: (() => {
+          const k = String((cfgNow.visionModel || {}).apiKey || '')
+          return k ? (k.length > 8 ? k.slice(0, 4) + '••••' + k.slice(-4) : '••••') : ''
+        })(),
+      },
       run: { running: roundRunning, label: roundRunning ? roundLabel : '', stopRequested },
       phase2: { tools: true, round: true, dm: true, chain: true, serverOk: true },
     }
@@ -547,6 +557,11 @@ export function apply(ctx, _config) {
         tail,
       ].join('\n')
       return sendJson(res, 200, { ok: true, text })
+    }
+    // 环境自检：把"试了哪些 Python、找到没有、venv 什么状态"全摊开（界面上点「重新检测」调它）
+    if (req.method === 'GET' && path === '/env/diag') {
+      try { return sendJson(res, 200, { ok: true, ...envDiagnostics(home) }) }
+      catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     if (req.method === 'GET' && path === '/selfcheck') {
       const login = loginStatus(home)
