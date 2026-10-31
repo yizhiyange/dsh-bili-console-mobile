@@ -977,8 +977,11 @@ export function apply(ctx, _config) {
   //   ① 私信监察器：每分钟轮询一次（开着才干活）
   try {
     ctx.effect(() => {
+      const c = loadConfig(home)
       // 监察间隔读配置（分钟），最低 30 秒，避免把接口打爆
-      const mins = Math.max(0.5, Number(loadConfig(home).dmWatchMinutes) || 1)
+      let mins = Math.max(0.5, Number(c.dmWatchMinutes) || 1)
+      // 省电（针对手机）：私信监察放宽到 3 倍间隔，少一轮定时的网络+CPU开销（2026-11-1）
+      if (c.lowPower) mins = Math.max(3, mins * 3)
       return startDmWatcher(ctx, home, () => extractHostModels(), Math.round(mins * 60000))
     }, 'bili-console: 私信监察器')
   } catch (e) { log(`私信监察器没起：${e?.message ?? e}`) }
