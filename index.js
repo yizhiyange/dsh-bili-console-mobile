@@ -73,7 +73,7 @@ export const Config = !z ? undefined : z.object({
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   perDay: z.natural().default(10).extra('volatile', true),
   commentPerRound: z.natural().default(5).extra('volatile', true),
-  mentionMode: z.string().default('auto').extra('volatile', true),
+  mentionMode: z.string().default('model').extra('volatile', true),
   mentionName: z.string().default('').extra('volatile', true),
   autoComment: z.boolean().default(false).extra('volatile', true),
   useHomeFeed: z.boolean().default(true).extra('volatile', true),
