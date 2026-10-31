@@ -1,5 +1,5 @@
 /**
- * dsh-bili-console —— 浏览器半端（「设置」里的一个 section）
+ * dsh-bili-console-mobile —— 浏览器半端（「设置」里的一个 section）
  * ============================================================================
  * ⭐ 这一版**直接搬运我们自己的 web/console.html（刷B站观测台）**：7 个页面、UI、功能
  *    全部对齐自研控制台，不是抄第三方插件（dsh-bili-scroll 那套骨架已经扔了）。
@@ -22,10 +22,17 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-bili-console',
+  id: 'dsh-bili-console-mobile',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
+
+    /* 页面顺序：左右滑动切页、顶部 tab 条都按这个排 */
+    const PAGE_ORDER = [
+      ['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'],
+      ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'],
+      ['comments', '评论'], ['settings', '设置'],
+    ]
 
     const API = '/api/bili-console'
     const asJson = async (res) => {
@@ -514,6 +521,7 @@ window.__ModuleLoader__.load({
       const [rawlog, setRawlog] = React.useState([])
       const [report, setReport] = React.useState(null)
       const [page, setPage] = React.useState('overview')
+      const pageRef = React.useRef(page); pageRef.current = page
       const [search, setSearch] = React.useState('')
       const [logLv, setLogLv] = React.useState('ALL')
       const [autoScroll, setAutoScroll] = React.useState(true)
@@ -812,16 +820,19 @@ window.__ModuleLoader__.load({
           setWebUrl(url); setWebOpen(true)
         } catch { toast_('打开失败，请手动在浏览器打开 /bili-console') }
       }
-      /** 电脑上「按住内容拖一下」就能滚屏（像手机那样），不用再去抓那条细滚动条。
-       *  规矩：只对鼠标生效（触屏自己会滚，手机不受影响）；按在输入框/下拉框/文本域上不劫持；
-       *  按在按钮和导航（比如「模型与密钥」）上也能拖——拖了就当滚屏，松手那次点击会被吞掉，
-       *  轻点一下仍然是正常点击；拖超过 6px 才算拖。想选字复制：按住 Shift 再拖。 */
+      /** 电脑上「按住内容拖一下」就能滚屏（像手机那样），不用再去抓那条细滚动条；
+       *  左右横着一拖还能切页面（比如从「设置」滑到「模型与密钥」），正好代替那条难用的细横滚动条。
+       *  规矩：鼠标和触屏都生效；起步看主导方向——水平为主就切页、竖直为主就滚屏；
+       *  按在输入框/下拉框/文本域/顶部 tab 条上不劫持；轻点一下仍是正常点击（拖超过 6px 才算拖）；
+       *  想选字复制：按住 Shift 再拖。 */
       React.useEffect(() => {
         try {
           if (window.__bdDragScroll) return
           window.__bdDragScroll = true
           const SKIP = 'input,textarea,select,[contenteditable="true"]'
-          let down = null, dragging = false, last = null, scroller = null, suppressUntil = 0
+          const SIDEBAR = '[data-bd-sidebar]'
+          let down = null, dragging = false, mode = null, last = null, scroller = null, suppressUntil = 0
+          let contentEl = null
           const findScroller = (el) => {
             let n = el
             while (n && n !== document.body) {
@@ -832,37 +843,81 @@ window.__ModuleLoader__.load({
             }
             return document.scrollingElement || document.documentElement
           }
+          const resetContent = () => {
+            if (contentEl) {
+              contentEl.style.transition = ''
+              contentEl.style.transform = ''
+              contentEl.style.willChange = ''
+              contentEl = null
+            }
+          }
           const stop = () => {
             if (dragging) suppressUntil = Date.now() + 250
             document.body.classList.remove('bd-grabbing')
-            down = null; dragging = false; scroller = null
+            down = null; dragging = false; mode = null; scroller = null
           }
           document.addEventListener('pointerdown', (e) => {
-            if (e.pointerType === 'touch' || e.pointerType === 'pen' || !e.isPrimary) return
+            if (!e.isPrimary || e.pointerType === 'pen') return
             if (e.button !== 0 || e.shiftKey) return
             const t = e.target
             if (!t || !t.closest || !t.closest('[data-bd-page]')) return
-            if (t.closest(SKIP)) return
+            if (t.closest(SKIP) || t.closest(SIDEBAR)) return  // 输入框不劫持；顶部 tab 条自己横滚，不抢
             down = { x: e.clientX, y: e.clientY, id: e.pointerId }
             last = { x: e.clientX, y: e.clientY }
-            dragging = false; scroller = null
+            mode = null; dragging = false; scroller = null
+            contentEl = t.closest('[data-bd-content]') || document.querySelector('[data-bd-content]')
           }, true)
           document.addEventListener('pointermove', (e) => {
             if (!down || e.pointerId !== down.id) return
-            if (e.buttons === 0) { stop(); return }
+            if (e.pointerType === 'mouse' && e.buttons === 0) { stop(); return }
+            const totX = e.clientX - down.x, totY = e.clientY - down.y
             const dx = e.clientX - last.x, dy = e.clientY - last.y
             if (!dragging) {
-              if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) return
-              dragging = true
-              scroller = findScroller(e.target)
-              try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
-              document.body.classList.add('bd-grabbing')
+              if (Math.hypot(totX, totY) < 6) return
+              // 起步定方向：水平为主 → 切页；竖直为主 → 滚屏（触屏的竖直交给原生滚动，不拦）
+              if (Math.abs(totX) > Math.abs(totY)) {
+                mode = 'page'; dragging = true
+                if (contentEl) { contentEl.style.transition = 'none'; contentEl.style.willChange = 'transform' }
+                try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
+                document.body.classList.add('bd-grabbing')
+              } else {
+                if (e.pointerType === 'touch') { stop(); return }   // 触屏竖直：不拦截，让原生滚
+                mode = 'scroll'; dragging = true
+                scroller = findScroller(e.target)
+                try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
+                document.body.classList.add('bd-grabbing')
+              }
             }
             last = { x: e.clientX, y: e.clientY }
-            if (scroller) { scroller.scrollTop -= dy; scroller.scrollLeft -= dx }
+            if (mode === 'scroll' && scroller) {
+              scroller.scrollTop -= dy; scroller.scrollLeft -= dx
+            } else if (mode === 'page' && contentEl) {
+              const w = contentEl.clientWidth || 1
+              const clamped = Math.max(-w * 0.5, Math.min(w * 0.5, totX))
+              contentEl.style.transform = 'translateX(' + (clamped * 0.35).toFixed(1) + 'px)'
+            }
           }, true)
-          document.addEventListener('pointerup', stop, true)
-          document.addEventListener('pointercancel', stop, true)
+          document.addEventListener('pointerup', (e) => {
+            if (!down || e.pointerId !== down.id) return
+            if (mode === 'page' && contentEl) {
+              const totX = e.clientX - down.x
+              const w = contentEl.clientWidth || 1
+              const threshold = Math.min(80, w * 0.25)
+              if (Math.abs(totX) > threshold) {
+                const idx = PAGE_ORDER.findIndex((p) => p[0] === pageRef.current)
+                if (idx >= 0) {
+                  const nextIdx = totX > 0 ? idx - 1 : idx + 1   // 往回拖（右滑）→ 上一页；往左滑 → 下一页
+                  if (nextIdx >= 0 && nextIdx < PAGE_ORDER.length) setPage(PAGE_ORDER[nextIdx][0])
+                }
+              }
+              contentEl.style.transition = 'transform .2s ease'   // 回弹 / 切换都平滑
+              contentEl.style.transform = 'translateX(0)'
+              contentEl.style.willChange = ''
+              suppressUntil = Date.now() + 250
+            }
+            stop()
+          }, true)
+          document.addEventListener('pointercancel', () => { resetContent(); stop() }, true)
           document.addEventListener('click', (e) => {
             if (Date.now() < suppressUntil) { e.stopPropagation(); e.preventDefault() }
           }, true)
@@ -1109,12 +1164,12 @@ window.__ModuleLoader__.load({
       else if (st.safeMode) banner = h('div', { 'data-bd-banner': '' }, '安全模式：当前不会自动发评论、不会发私信。想真发时，到「设置」把「自动评论并 @」和「投递方式」打开。')
 
       /* ── 侧边导航 ── */
-      const PAGES = [['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'], ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'], ['comments', '评论'], ['settings', '设置']]
+      const PAGES = PAGE_ORDER
       const sidebar = h('aside', { 'data-bd-sidebar': '' },
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
         h('div', { 'data-bd-spacer': '' }),
-        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
+        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
       const renderComments = () => {
@@ -1860,10 +1915,10 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         const style = document.createElement('style')
-        style.setAttribute('data-plugin-css', 'dsh-bili-console')
+        style.setAttribute('data-plugin-css', 'dsh-bili-console-mobile')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-bili-console: 控制台样式')
+        ctx.effect(() => () => style.remove(), 'dsh-bili-console-mobile: 控制台样式')
 
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
