@@ -1913,6 +1913,30 @@ window.__ModuleLoader__.load({
                 h('i', { 'data-bd-vgbar': '', style: { width: '0%' } })),
               h('span', { 'data-bd-ds': '', 'data-bd-vgtxt': '', style: { whiteSpace: 'nowrap' } }, '空闲')),
             h('div', { 'data-bd-vglog': '', style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '120px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' } }, '')),
+          Card({ title: '视频生成设置', sub: '独立配置，和发评论的分开' },
+            ToggleRow({ label: '配音（需联网）', note: '用免费 edge-tts 合成旁白；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
+            ToggleRow({ label: '用 AI 写稿', note: '关掉 = 用当天刷到的标题拼合集，不需要任何模型 / key', on: cfg.videoUseAI !== false, onChange: (v) => saveOne('videoUseAI', v) }),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '清晰度'), h('div', { 'data-bd-ds': '' }, '自动 = 电脑 720p、手机 480p（手机自己降档，不影响电脑）')),
+              Select({ value: cfg.videoQuality || 'auto', onChange: (v) => saveOne('videoQuality', v), minWidth: 120 },
+                h('option', { value: 'auto' }, '自动'),
+                h('option', { value: '720' }, '720p'),
+                h('option', { value: '480' }, '480p 省电'))),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '最多几张卡片'), h('div', { 'data-bd-ds': '' }, '越多越长；手机建议 4 张')),
+              Stepper({ value: (cfg.videoMaxCards || 6) + ' 张', onStep: (d) => step('videoMaxCards', d, ' 张') })),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' },
+                h('div', { 'data-bd-lb': '' }, '用哪个模型写稿'),
+                h('div', { 'data-bd-ds': '' }, (() => {
+                  const eps = (st.chain && st.chain.endpoints) || []
+                  return eps.length
+                    ? ('自动 = 跟发评论同一条降级链（当前 ' + eps.length + ' 个模型）')
+                    : '现在没有可用模型 → 会自动用模板合集（不需要 key）'
+                })())),
+              Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
+                h('option', { value: '' }, '自动（跟评论一样）'),
+                (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id)))))),
           Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
             h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
               h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
