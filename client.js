@@ -304,7 +304,7 @@ window.__ModuleLoader__.load({
     .narrow [data-bd-search]{width:100%;order:3;height:34px;}
     .narrow [data-bd-search] input{font-size:13px;}
     .narrow [data-bd-main]{flex-direction:column;gap:10px;}
-    .narrow [data-bd-sidebar]{width:100%;position:static;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;
+    .narrow [data-bd-sidebar]{width:100%;position:static;flex-direction:row;flex-wrap:wrap;
       padding:8px;gap:6px;align-items:center;}
     .narrow [data-bd-sidebar]::-webkit-scrollbar{height:12px;}
     .narrow [data-bd-sidebar]::-webkit-scrollbar-thumb{background:var(--off);border:4px solid transparent;border-radius:6px;background-clip:padding-box;}
@@ -521,7 +521,6 @@ window.__ModuleLoader__.load({
       const [rawlog, setRawlog] = React.useState([])
       const [report, setReport] = React.useState(null)
       const [page, setPage] = React.useState('overview')
-      const pageRef = React.useRef(page); pageRef.current = page
       const [search, setSearch] = React.useState('')
       const [logLv, setLogLv] = React.useState('ALL')
       const [autoScroll, setAutoScroll] = React.useState(true)
@@ -820,109 +819,6 @@ window.__ModuleLoader__.load({
           setWebUrl(url); setWebOpen(true)
         } catch { toast_('打开失败，请手动在浏览器打开 /bili-console') }
       }
-      /** 电脑上「按住内容拖一下」就能滚屏（像手机那样），不用再去抓那条细滚动条；
-       *  左右横着一拖还能切页面（比如从「设置」滑到「模型与密钥」），正好代替那条难用的细横滚动条。
-       *  规矩：鼠标和触屏都生效；起步看主导方向——水平为主就切页、竖直为主就滚屏；
-       *  按在输入框/下拉框/文本域/顶部 tab 条上不劫持；轻点一下仍是正常点击（拖超过 6px 才算拖）；
-       *  想选字复制：按住 Shift 再拖。 */
-      React.useEffect(() => {
-        try {
-          if (window.__bdDragScroll) return
-          window.__bdDragScroll = true
-          const SKIP = 'input,textarea,select,[contenteditable="true"]'
-          const SIDEBAR = '[data-bd-sidebar]'
-          let down = null, dragging = false, mode = null, last = null, scroller = null, suppressUntil = 0
-          let contentEl = null
-          const findScroller = (el) => {
-            let n = el
-            while (n && n !== document.body) {
-              try {
-                if (n.scrollHeight > n.clientHeight + 2 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n
-              } catch { /* noop */ }
-              n = n.parentElement
-            }
-            return document.scrollingElement || document.documentElement
-          }
-          const resetContent = () => {
-            if (contentEl) {
-              contentEl.style.transition = ''
-              contentEl.style.transform = ''
-              contentEl.style.willChange = ''
-              contentEl = null
-            }
-          }
-          const stop = () => {
-            if (dragging) suppressUntil = Date.now() + 250
-            document.body.classList.remove('bd-grabbing')
-            down = null; dragging = false; mode = null; scroller = null
-          }
-          document.addEventListener('pointerdown', (e) => {
-            if (!e.isPrimary || e.pointerType === 'pen') return
-            if (e.button !== 0 || e.shiftKey) return
-            const t = e.target
-            if (!t || !t.closest || !t.closest('[data-bd-page]')) return
-            if (t.closest(SKIP) || t.closest(SIDEBAR)) return  // 输入框不劫持；顶部 tab 条自己横滚，不抢
-            down = { x: e.clientX, y: e.clientY, id: e.pointerId }
-            last = { x: e.clientX, y: e.clientY }
-            mode = null; dragging = false; scroller = null
-            contentEl = t.closest('[data-bd-content]') || document.querySelector('[data-bd-content]')
-          }, true)
-          document.addEventListener('pointermove', (e) => {
-            if (!down || e.pointerId !== down.id) return
-            if (e.pointerType === 'mouse' && e.buttons === 0) { stop(); return }
-            const totX = e.clientX - down.x, totY = e.clientY - down.y
-            const dx = e.clientX - last.x, dy = e.clientY - last.y
-            if (!dragging) {
-              if (Math.hypot(totX, totY) < 6) return
-              // 起步定方向：水平为主 → 切页；竖直为主 → 滚屏（触屏的竖直交给原生滚动，不拦）
-              if (Math.abs(totX) > Math.abs(totY)) {
-                mode = 'page'; dragging = true
-                if (contentEl) { contentEl.style.transition = 'none'; contentEl.style.willChange = 'transform' }
-                try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
-                document.body.classList.add('bd-grabbing')
-              } else {
-                if (e.pointerType === 'touch') { stop(); return }   // 触屏竖直：不拦截，让原生滚
-                mode = 'scroll'; dragging = true
-                scroller = findScroller(e.target)
-                try { const s = window.getSelection(); if (s && s.rangeCount) s.removeAllRanges() } catch { /* noop */ }
-                document.body.classList.add('bd-grabbing')
-              }
-            }
-            last = { x: e.clientX, y: e.clientY }
-            if (mode === 'scroll' && scroller) {
-              scroller.scrollTop -= dy; scroller.scrollLeft -= dx
-            } else if (mode === 'page' && contentEl) {
-              const w = contentEl.clientWidth || 1
-              const clamped = Math.max(-w * 0.5, Math.min(w * 0.5, totX))
-              contentEl.style.transform = 'translateX(' + (clamped * 0.35).toFixed(1) + 'px)'
-            }
-          }, true)
-          document.addEventListener('pointerup', (e) => {
-            if (!down || e.pointerId !== down.id) return
-            if (mode === 'page' && contentEl) {
-              const totX = e.clientX - down.x
-              const w = contentEl.clientWidth || 1
-              const threshold = Math.min(80, w * 0.25)
-              if (Math.abs(totX) > threshold) {
-                const idx = PAGE_ORDER.findIndex((p) => p[0] === pageRef.current)
-                if (idx >= 0) {
-                  const nextIdx = totX > 0 ? idx - 1 : idx + 1   // 往回拖（右滑）→ 上一页；往左滑 → 下一页
-                  if (nextIdx >= 0 && nextIdx < PAGE_ORDER.length) setPage(PAGE_ORDER[nextIdx][0])
-                }
-              }
-              contentEl.style.transition = 'transform .2s ease'   // 回弹 / 切换都平滑
-              contentEl.style.transform = 'translateX(0)'
-              contentEl.style.willChange = ''
-              suppressUntil = Date.now() + 250
-            }
-            stop()
-          }, true)
-          document.addEventListener('pointercancel', () => { resetContent(); stop() }, true)
-          document.addEventListener('click', (e) => {
-            if (Date.now() < suppressUntil) { e.stopPropagation(); e.preventDefault() }
-          }, true)
-        } catch { /* 探测失败就不启用，不影响别的功能 */ }
-      }, [])
 
       /** 打开评论所在的视频：手机先试 B站 App（没装自动落网页版），电脑直接系统浏览器进网页版 */
       const openVideo = async (bvid) => {
