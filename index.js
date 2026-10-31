@@ -46,7 +46,7 @@ import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clear
 import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
 import { chat } from './lib/llm.mjs'
 import { describeImage, visionReady } from './lib/vision.mjs'
-import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng, testImageGen } from './lib/videogen.mjs'
+import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng, testImageGen, genOpeningVideo } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -831,6 +831,21 @@ export function apply(ctx, _config) {
         const out = await testImageGen(c)
         if (!out.ok) return sendJson(res, 200, { ok: false, error: out.error })
         return sendJson(res, 200, { ok: true, model: c.videoImageModel, size: out.size, dataUrl: out.dataUrl || '' })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 测一下「文生视频」能不能用：真生成一小段（排队可能 1~5 分钟），成功后返回文件名供界面播放
+    if (req.method === 'POST' && path === '/video/test-cogvideo') {
+      try {
+        const c = loadConfig(home)
+        if (!c.videoImageKey) return sendJson(res, 200, { ok: false, error: '没填 API Key（跟生图共用那个）' })
+        const dir = join(home, '.video')
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+        const r = await genOpeningVideo({ ...c, __dir: dir },
+          '一段 3 秒的短视频：扁平插画风格的城市夜景，深色底，不要出现任何文字', {})
+        if (!r.ok || !r.path) return sendJson(res, 200, { ok: false, error: r.error || '没生成出来' })
+        const name = r.path.split(/[\\/]/).pop()
+        const size = statSync(r.path).size
+        return sendJson(res, 200, { ok: true, name, size })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
