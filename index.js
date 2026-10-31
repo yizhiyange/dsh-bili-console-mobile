@@ -34,10 +34,10 @@ import { parseLine, levelOf, translate, tailLines } from './lib/logread.mjs'
 import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
-import { retractLast, listPosts, postedStats, clearPosts } from './lib/retract.mjs'
+import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { asrStatus, asrReadiness, asrDiag } from './lib/asr.mjs'
 import { visionReady } from './lib/vision.mjs'
-import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile } from './lib/bili.mjs'
+import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
@@ -501,6 +501,33 @@ export function apply(ctx, _config) {
     // ---- 撤回：把 AI 自己发出去的内容删掉 ----
     if (req.method === 'GET' && path === '/posted') {
       return sendJson(res, 200, { ok: true, items: listPosts(home, 50), ...postedStats(home) })
+    }
+    // 评论管理：看发过什么（列表）
+    if (req.method === 'GET' && path === '/comments') {
+      return sendJson(res, 200, { ok: true, items: listPosts(home, 200) })
+    }
+    // 评论管理：单条撤回（只删指定的那一条，不动别的）
+    if (req.method === 'POST' && path === '/comments/delete') {
+      const b = await readBody(req)
+      const rpid = Number(b.rpid || 0)
+      if (!rpid) return sendJson(res, 200, { ok: false, error: '缺 rpid' })
+      const rec = listPosts(home, 500).find((x) => Number(x.rpid) === rpid)
+      if (!rec) return sendJson(res, 200, { ok: false, error: '记录里没有这条（可能早就删过）' })
+      let client
+      try { client = newClient(loadConfig(home), home) }
+      catch (e) { return sendJson(res, 200, { ok: false, error: '起 B站 客户端失败：' + String(e?.message || e).slice(0, 120) }) }
+      try {
+        const r = await deleteComment(client, rec.bvid, rpid)
+        const code = Number((r && (r.code ?? (r.data && r.data.code))) || 0)
+        if (code !== 0) {
+          // 12009 = 评论不存在（已经删过了）：当作成功，清掉本地记录
+          if (code === 12009) { dropPost(home, rpid); return sendJson(res, 200, { ok: true, already: true }) }
+          const msg = (r && (r.message || (r.data && r.data.message))) || ''
+          return sendJson(res, 200, { ok: false, error: 'B站 返回 ' + code + (msg ? '：' + msg : '') })
+        }
+        dropPost(home, rpid)
+        return sendJson(res, 200, { ok: true })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: String(e?.message || e).slice(0, 160) }) }
     }
     if (req.method === 'POST' && path === '/retract') {
       const body = await readBody(req)
