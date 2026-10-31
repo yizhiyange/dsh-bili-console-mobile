@@ -35,7 +35,7 @@ import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts } from './lib/retract.mjs'
-import { asrStatus } from './lib/asr.mjs'
+import { asrStatus, asrReadiness } from './lib/asr.mjs'
 import { visionReady } from './lib/vision.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
@@ -214,13 +214,19 @@ export function apply(ctx, _config) {
   let roundRunning = false          // 防止手动轮次与定时轮次叠跑
   let stopRequested = false         // 用户点了「停止」：下一处检查点就退出
   let roundLabel = ''               // 当前在跑哪种轮次（手动/试跑/定时），给界面显示
-  let asrInfo = { ready: false, reason: '还没检测' }
-  ;(async () => {
+  // 转写能力探测：15 秒缓存，避免 /state 每 2 秒轮询都去起一个 python 子进程。
+  // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
+  let asrInfo = { ready: false, mode: 'local', reason: '还没检测' }
+  let asrInfoAt = 0
+  async function refreshAsrInfo(c) {
+    if (Date.now() - asrInfoAt < 15000) return asrInfo
+    asrInfoAt = Date.now()
     try {
-      const py = resolvePython(loadConfig(home), home)
-      asrInfo = await asrStatus(py)
-    } catch (e) { asrInfo = { ready: false, reason: String((e && e.message) || e).slice(0, 120) } }
-  })()
+      const py = resolvePython(c, home)
+      asrInfo = await asrReadiness(c, py)
+    } catch (e) { asrInfo = { ready: false, mode: 'local', reason: String((e && e.message) || e).slice(0, 120) } }
+    return asrInfo
+  }
 
   // ---- 控制台页面 ----
   // 网页版是独立实现（照老设计做的），直接读文件即可；DSH 面板是 client.js 那套。
@@ -268,7 +274,7 @@ export function apply(ctx, _config) {
       },
       memory: { mode: (cfgNow.contextMode === 'thread' ? 'thread' : 'isolated'), ...threadStats(home) },
       posted: postedStats(home),
-      asr: { enabled: !!cfgNow.transcribe, model: cfgNow.asrModel || 'small', ready: !!asrInfo.ready, backend: asrInfo.backend || '', reason: asrInfo.reason || '' },
+      asr: (() => { const a = asrInfo || {}; return { enabled: !!cfgNow.transcribe, model: cfgNow.asrModel || 'small', mode: cfgNow.asrMode === 'cloud' ? 'cloud' : 'local', cloud: { url: cfgNow.asrCloudUrl || '', hasKey: Boolean(cfgNow.asrCloudKey), model: cfgNow.asrCloudModel || '' }, ready: !!a.ready, backend: a.backend || '', reason: a.reason || '' } })(),
       vision: {
         ready: visionReady(cfgNow),
         model: (cfgNow.visionModel || {}).modelName || '',
@@ -306,7 +312,11 @@ export function apply(ctx, _config) {
     else return sendJson(res, 404, { ok: false, error: `unknown ${req.method} ${u.pathname}` })
 
     if (req.method === 'OPTIONS') return sendJson(res, 204, {})
-    if (req.method === 'GET' && path === '/state') return sendJson(res, 200, buildState())
+    if (req.method === 'GET' && path === '/state') {
+      // 转写能力有 15 秒缓存，这里 await 一下（云端模式基本零开销）
+      try { await refreshAsrInfo(loadConfig(home)) } catch {}
+      return sendJson(res, 200, buildState())
+    }
     // ===== 版本自检 =====
     // GET  /update/state  —— 拿当前版本 + 上次检查结果 + 可用加速源（不联网，秒回）
     // POST /update/check  —— 真去查一次（body: {force:true, mode?, custom?}）
