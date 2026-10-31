@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
     const PAGE_ORDER = [
       ['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'],
       ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'],
-      ['comments', '评论'], ['settings', '设置'],
+      ['comments', '评论'], ['publish', '发布'], ['settings', '设置'],
     ]
 
     const API = '/api/bili-console'
@@ -136,10 +136,18 @@ window.__ModuleLoader__.load({
     [data-bd-sw]{flex:none;width:44px;height:24px;border-radius:12px;border:0;cursor:pointer;position:relative;padding:0;background:var(--off);transition:background .15s;}
     [data-bd-sw][data-on]{background:var(--blue);} [data-bd-sw] i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s;display:block;box-shadow:0 1px 2px rgba(0,0,0,.2);}
     [data-bd-sw][data-on] i{left:23px;} [data-bd-sw]:disabled{opacity:.45;cursor:default;}
-    [data-bd-select]{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:13px;min-width:130px;color:var(--t1);}
-    [data-bd-select] select{border:none;outline:none;background:none;font-size:13px;width:100%;cursor:pointer;appearance:none;color:var(--t1);}
+    /* 自绘下拉：原生 <select> 在 Electron / 手机 webview 里经常点不出来，
+       而且弹出层永远是系统白底、不跟深色主题（2026-10-31 用户实测，全项目 8 处已换掉） */
+    [data-bd-select]{position:relative;display:inline-block;min-width:130px;}
+    [data-bd-selbtn]{display:inline-flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:13px;color:var(--t1);cursor:pointer;font-family:inherit;}
+    [data-bd-selbtn] [data-bd-selarrow]{color:var(--t2);font-size:11px;}
+    [data-bd-selpop]{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:80;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.22);padding:4px;max-height:240px;overflow:auto;}
+    [data-bd-selopt]{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:transparent;color:var(--t1);font-size:13px;border-radius:6px;cursor:pointer;font-family:inherit;}
+    [data-bd-selopt]:hover{background:rgba(127,127,127,.16);}
+    [data-bd-selopt].on{background:rgba(127,127,127,.22);font-weight:600;}
     [data-bd-input]{display:flex;align-items:center;height:36px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:13px;gap:8px;color:var(--t1);}
     [data-bd-input] input{border:none;outline:none;flex:1;font-size:13px;background:none;min-width:0;color:var(--t1);}
+    [data-bd-input] textarea{border:none;outline:none;flex:1;font-size:13px;background:none;min-width:0;color:var(--t1);resize:vertical;min-height:84px;line-height:1.6;font-family:inherit;}
     [data-bd-input] .ph{color:var(--t3);}
     [data-bd-stepper]{display:inline-flex;align-items:center;gap:10px;height:32px;padding:0 12px;border:1px solid var(--line);border-radius:6px;font-size:13px;min-width:110px;justify-content:space-between;color:var(--t1);}
     [data-bd-stepper] button{color:var(--t2);font-size:14px;padding:0 4px;} [data-bd-stepper] button:hover{color:var(--blue);}
@@ -419,12 +427,62 @@ window.__ModuleLoader__.load({
         children)
     }
 
+    /**
+     * 下拉选择（自绘）——**不要用原生 <select>**：
+     * Electron / 手机 webview 里原生下拉经常点不出来，而且弹出层永远是系统白底、不跟深色主题。
+     * 这里用「按钮 + 绝对定位浮层」自己画，颜色全走 CSS 变量；点空白处 / 按 Esc 自动收起。
+     * 注意：这里刻意不用 useState —— 这些组件是直接调用式（Select(...) 而不是 h(Select,...)），
+     * hooks 会算到 Console 头上，切页时数量一变直接崩（2026-10-27 踩过）。
+     */
     const Select = (props, ...kids) => {
       const p = props || {}
-      const children = [...(p.children != null ? [].concat(p.children) : []), ...kids]
+      const opts = [...(p.children != null ? [].concat(p.children) : []), ...kids]
+        .flat().filter(Boolean)
+        .map((o) => {
+          const pr = (o && o.props) || {}
+          return { value: String(pr.value ?? ''), label: pr.children != null ? pr.children : String(pr.value ?? '') }
+        })
+      const cur = opts.find((o) => o.value === String(p.value ?? ''))
+      const closeAll = () => { try { document.querySelectorAll('[data-bd-selpop]').forEach((x) => { x.style.display = 'none' }) } catch { /* noop */ } }
+      const onBtn = (e) => {
+        e.preventDefault(); e.stopPropagation()
+        const box = e.currentTarget.closest('[data-bd-select]')
+        const pop = box && box.querySelector('[data-bd-selpop]')
+        if (!pop) return
+        const willShow = pop.style.display !== 'block'
+        closeAll()
+        pop.style.display = willShow ? 'block' : 'none'
+        if (!globalThis.__bdSelAway) {
+          globalThis.__bdSelAway = true
+          document.addEventListener('mousedown', (ev) => {
+            try { if (!ev.target.closest || !ev.target.closest('[data-bd-select]')) closeAll() } catch { /* noop */ }
+          }, true)
+          document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeAll() })
+        }
+      }
+      const onOpt = (e) => {
+        e.preventDefault(); e.stopPropagation()
+        const v = String(e.currentTarget.getAttribute('data-v') ?? '')
+        const box = e.currentTarget.closest('[data-bd-select]')
+        try {
+          if (box) {
+            const pop = box.querySelector('[data-bd-selpop]')
+            if (pop) pop.style.display = 'none'
+            const txt = box.querySelector('[data-bd-seltext]')
+            if (txt) txt.textContent = e.currentTarget.textContent
+          }
+        } catch { /* noop */ }
+        if (p.onChange) p.onChange(v)
+      }
       return h('div', { 'data-bd-select': '', style: p.minWidth ? { minWidth: p.minWidth } : undefined },
-        h('select', { value: p.value ?? '', onChange: (e) => p.onChange(e.target.value) }, children),
-        h('span', { style: { color: 'var(--t2)' } }, '▾'))
+        h('button', { type: 'button', 'data-bd-selbtn': '', onClick: onBtn },
+          h('span', { 'data-bd-seltext': '' }, cur ? cur.label : '请选择'),
+          h('span', { 'data-bd-selarrow': '' }, '▾')),
+        h('div', { 'data-bd-selpop': '', style: { display: 'none' } },
+          opts.map((o, i) => h('button', {
+            type: 'button', key: o.value || ('opt' + i), 'data-bd-selopt': '', 'data-v': o.value,
+            className: o.value === String(p.value ?? '') ? 'on' : '', onClick: onOpt,
+          }, o.label))))
     }
 
     const Input = ({ value, onChange, placeholder, type, onBlur, style }) => h('div', { 'data-bd-input': '', style },
@@ -1062,7 +1120,7 @@ window.__ModuleLoader__.load({
         PAGES.map(([v, label]) => h('button', { key: v, 'data-bd-pill': '', className: page === v ? 'active' : '', onClick: () => setPage(v) }, label)),
         h('button', { 'data-bd-pill': '', className: 'switch', onClick: openConsole }, '网页版控制台 ↗'),
         h('div', { 'data-bd-spacer': '' }),
-        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console-mobile'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
+        h('div', { 'data-bd-modecard': '' }, h('b', null, 'dsh-bili-console'), h('span', { style: { color: 'var(--t2)', fontSize: '11px' } }, 'DSH 内置控制台 · 与网页版共用同一份配置')))
 
       /* ── 各页面 ── */
       const renderComments = () => {
@@ -1780,7 +1838,68 @@ window.__ModuleLoader__.load({
         return h('div', { 'data-bd-pagewrap': '' }, blocks)
       }
 
-      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, comments: renderComments, settings: renderSettings }
+      /**
+       * 发布页（2026-10-31 加）：豆包写的发布能力之前只在「网页控制台」有入口，
+       * DSH 设置面板里根本找不到，用户以为功能丢了。这里补上同样的入口。
+       * 注意：表单全部用非受控输入（点按钮时读 DOM），不在这里加 useState —— 见 Select 上方注释。
+       */
+      const renderPublish = () => {
+        const readVal = (sel) => {
+          try { const el = document.querySelector(sel); return el ? String(el.value || '').trim() : '' } catch { return '' }
+        }
+        const doDynamic = async () => {
+          const text = readVal('[data-bd-dyninput] textarea')
+          if (!text) return toast_('先写点内容再发')
+          try {
+            toast_('正在发动态…')
+            const r = await jpost('/publish/dynamic', { text })
+            toast_(r && r.ok ? '动态已发出去' : ('发动态失败：' + ((r && (r.error || r.message)) || '未知')))
+          } catch (e) { toast_('发动态失败：' + String(e?.message ?? e)) }
+        }
+        const doVideo = async () => {
+          const body = {
+            videoPath: readVal('[data-bd-vidpath] input'),
+            title: readVal('[data-bd-vidtitle] input'),
+            desc: readVal('[data-bd-viddesc] input'),
+            tid: Number(readVal('[data-bd-vidtid] input')) || 124,
+            tags: readVal('[data-bd-vidtags] input') || 'AI',
+            coverPath: readVal('[data-bd-vidcover] input'),
+          }
+          if (!body.videoPath) return toast_('先填视频文件的完整路径')
+          if (!body.title) return toast_('先填标题')
+          try {
+            toast_('正在投稿，可能要一会儿…')
+            const r = await jpost('/publish/video', body)
+            toast_(r && r.ok ? '投稿已提交（B站还要审核）' : ('投稿失败：' + ((r && (r.error || r.message)) || '未知')))
+          } catch (e) { toast_('投稿失败：' + String(e?.message ?? e)) }
+        }
+        return h('div', { 'data-bd-pagewrap': '' },
+          h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '发布'),
+            h('span', { className: 's' }, '发动态 / 投稿视频——内容你自己写，插件只负责发')),
+          Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
+            h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
+              h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
+            h('div', { style: { marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doDynamic }, '发布动态'))),
+          Card({ title: '投稿视频', sub: '点「启动投稿」才上传；B站自己审核' },
+            h('div', { 'data-bd-input': '', 'data-bd-vidpath': '' },
+              h('input', { placeholder: '视频文件完整路径（如 D:/videos/test.mp4）' })),
+            h('div', { 'data-bd-input': '', 'data-bd-vidtitle': '', style: { marginTop: '8px' } },
+              h('input', { placeholder: '视频标题（必填，≤80字）' })),
+            h('div', { 'data-bd-input': '', 'data-bd-viddesc': '', style: { marginTop: '8px' } },
+              h('input', { placeholder: '视频简介（可选）' })),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
+              h('div', { 'data-bd-input': '', 'data-bd-vidtid': '', style: { flex: '1 1 110px' } },
+                h('input', { placeholder: '分区ID（默认124）' })),
+              h('div', { 'data-bd-input': '', 'data-bd-vidtags': '', style: { flex: '2 1 160px' } },
+                h('input', { placeholder: '标签（逗号分隔）' }))),
+            h('div', { 'data-bd-input': '', 'data-bd-vidcover': '', style: { marginTop: '8px' } },
+              h('input', { placeholder: '封面图路径（可选，留空自动抽帧）' })),
+            h('div', { style: { marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doVideo }, '启动投稿'))))
+      }
+
+      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, comments: renderComments, publish: renderPublish, settings: renderSettings }
       const content = h(PageBoundary, { onHome: () => setPage('overview') }, h('div', { 'data-bd-content': '' }, (PAGERENDER[page] || renderOverview)()))
 
       const modal = h('div', { 'data-bd-mask': '', className: login.open ? 'show' : undefined },
@@ -1824,10 +1943,10 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         const style = document.createElement('style')
-        style.setAttribute('data-plugin-css', 'dsh-bili-console-mobile')
+        style.setAttribute('data-plugin-css', 'dsh-bili-console')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-bili-console-mobile: 控制台样式')
+        ctx.effect(() => () => style.remove(), 'dsh-bili-console: 控制台样式')
 
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
