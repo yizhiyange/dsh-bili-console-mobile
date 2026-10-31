@@ -289,7 +289,9 @@ def main():
     cmd += ['-c:v', 'libx264', '-preset', preset, '-crf', '26', '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart'] + extra
     if audio_path:
-        cmd += ['-c:a', 'aac', '-b:a', '96k', '-shortest']
+        # ⚠️ 必须转成 44100Hz 立体声：edge-tts 出来是 24kHz 单声道，
+        #   安卓系统播放器/文件管理器对 24kHz AAC 兼容极差 → 用户点开显示「无法播放此视频」（2026-11-1 修）
+        cmd += ['-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '128k', '-shortest']
     cmd += [out]
 
     log('开始渲染 %d 张卡片，%dx%d@%dfps…' % (len(cards), W, H, fps))
