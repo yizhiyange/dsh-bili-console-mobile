@@ -720,20 +720,6 @@ window.__ModuleLoader__.load({
           await aud.play().catch(() => { if (msg) msg.textContent = '浏览器不让自动播放，点一下再试试' })
         } catch (e) { toast_('试听失败：' + String(e?.message ?? e)) }
       }
-      const applyVoicePreset = async (ps) => {
-        try {
-          const r = await jpost('/settings', {
-            videoVoice: true,
-            videoVoiceName: ps.v,
-            videoVoiceRate: ps.r,
-            videoVoicePitch: ps.p,
-            videoVoiceVolume: ps.vol,
-          })
-          if (!r || !r.ok) return toast_('套用失败：' + ((r && r.error) || ''))
-          toast_('已套用「' + ps.t + '」，正在试听…')
-          await doTtsPreview()
-        } catch (e) { toast_('套用失败：' + String(e?.message ?? e)) }
-      }
       const loadMemInfo = async () => {
         try {
           const box = document.querySelector('[data-bd-meminfo]')
@@ -2145,21 +2131,6 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-vglog': '', style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '120px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' } }, '')),
           Card({ title: '视频生成设置', sub: '独立配置，和发评论的分开' },
             ToggleRow({ label: '配音（需联网）', note: '用微软 edge-tts 免费合成旁白（就是你要的「A 级 TTS」）；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
-            (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '一键音色预设'),
-                h('div', { 'data-bd-ds': '' }, '不知道选啥就点这个：自动把声线/语速/音调/音量一起设好，并且马上念一句给你听')),
-              h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-                ...[
-                  { k: 'cute', t: '🐟 活泼可爱', v: 'zh-CN-XiaoyiNeural', r: '+12%', p: '+18Hz', vol: '+0%' },
-                  { k: 'boy', t: '⚡ 元气少年', v: 'zh-CN-YunxiaNeural', r: '+15%', p: '+10Hz', vol: '+0%' },
-                  { k: 'soft', t: '🌸 温柔轻声', v: 'zh-CN-XiaoxiaoNeural', r: '-8%', p: '+5Hz', vol: '-10%' },
-                  { k: 'news', t: '🎙 沉稳播报', v: 'zh-CN-YunyangNeural', r: '-5%', p: '-5Hz', vol: '+0%' },
-                ].map((ps) => h('button', {
-                  key: ps.k, 'data-bd-btn': '', className: 'ghost sm',
-                  'data-bd-voicepreset': ps.k,
-                  title: ps.v + ' · 语速 ' + ps.r + ' · 音调 ' + ps.p,
-                  onClick: () => applyVoicePreset(ps),
-                }, ps.t)))),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '配音声线'), h('div', { 'data-bd-ds': '' }, '都是微软 edge-tts 的音色，免费；云希=年轻男声、晓晓=标准女声、云野=沉稳男声、晓伊=温柔女声、云夏=少年男声')),
               Select({ value: cfg.videoVoiceName || 'zh-CN-XiaoxiaoNeural', onChange: (v) => saveOne('videoVoiceName', v), minWidth: 170 },
