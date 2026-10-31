@@ -405,6 +405,27 @@ window.__ModuleLoader__.load({
       h('button', { onClick: () => onStep(1) }, '+'))
 
     /**
+     * 文本输入（失焦/回车才提交）：内部草稿，不会被 2 秒轮询冲掉。
+     * 用它是因为之前吃过亏——直接绑 cfg 的输入框，每 2 秒就被服务端值覆盖。
+     */
+    const DraftInput = ({ value, onCommit, placeholder, type = 'text' }) => {
+      const [d, setD] = React.useState(null)
+      const shown = d != null ? d : String(value != null ? value : '')
+      const commit = () => {
+        const v = shown
+        setD(null)
+        if (v !== String(value != null ? value : '')) onCommit(v)
+      }
+      return h('div', { 'data-bd-input': '' },
+        h('input', {
+          type, value: shown, placeholder,
+          onChange: (e) => setD(e.target.value),
+          onBlur: commit,
+          onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); try { e.currentTarget.blur() } catch {} } },
+        }))
+    }
+
+    /**
      * 数字输入框：想填多少填多少，不用按住 + 号点半天。
      * 用本地草稿，避免 /state 每 2 秒轮询把正在输入的内容冲掉；
      * 失焦或回车才提交（提交时按 min/max 夹一次，防止填出离谱的数）。
@@ -1271,33 +1292,60 @@ window.__ModuleLoader__.load({
         /* 每天挑与转写 */
         {
           const asr = st.asr || {}
+          const cloud = asr.cloud || {}
+          const mode = asr.mode === 'cloud' ? 'cloud' : 'local'
           blocks.push(Card({
             title: '每天挑与转写', sub: null,
-            right: Tag({ c: asr.ready ? 'green' : 'gray', children: asr.ready ? ('转写后端就绪 · ' + (asr.backend || '')) : '可选功能 · 未装' }),
+            right: Tag({
+              c: asr.ready ? 'green' : 'gray',
+              children: asr.ready ? ('转写就绪 · ' + (asr.backend || '')) : (mode === 'cloud' ? '云端还没配好' : '可选功能 · 未装'),
+            }),
           },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每天最多挑几条'), h('div', { 'data-bd-ds': '' }, '全天总量：AI 一轮里从候选视频里挑出值得看的条数。挑满就收工，不贪多')),
               h(NumInput, { value: cfg.perDay || 0, min: 0, max: 999, suffix: '条 / 天', onCommit: (n) => saveOne('perDay', n) })),
             ToggleRow({
-              label: '本地转写',
+              label: '没字幕时转写',
               note: asr.ready
-                ? ('没字幕时会下载音频，用本机 ' + (asr.backend || '转写后端') + ' 转成文字再看内容；慢几十秒，不花云端额度')
-                : ('这是可选功能，没装不影响挑视频和评论' + (asr.reason ? '（' + asr.reason + '）' : '')),
+                ? ('没字幕的视频会先下载音频转成文字再看；当前走 ' + (asr.backend || '转写后端'))
+                : ('可选功能，没装也不影响挑视频和评论——会用标题/简介/封面识图兜底判断'),
               on: !!cfg.transcribe, onChange: (v) => saveOne('transcribe', v),
             }),
-            asr.ready ? null : h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '10px' } },
-              h('button', {
-                'data-bd-btn': '', className: 'primary sm', disabled: asrRunning,
-                onClick: () => installEnv('asr'),
-              }, asrRunning ? '安装中…' : '一键安装转写后端'),
-              h('span', { 'data-bd-ds': '', style: { fontSize: '12px', color: 'var(--t2)' } }, '约 200MB，装完首次转写还要下模型')),
-            asr.ready ? null : h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
-              '不想装也不影响用：没字幕的视频会退而用「标题 + 简介 + 封面识图」来判断——效果差点，但不用装任何东西、也不用额外花钱。'),
-            envJobView(['asr']),
             h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '转写模型'), h('div', { 'data-bd-ds': '' }, 'small 最快、large 最准也最慢')),
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '转写方式'),
+                h('div', { 'data-bd-ds': '' }, '本地＝装在自己机器上（约 200MB，手机常装不下）；云端＝填个 API，几分钱一条，不用装东西')),
+              Select({ value: mode, onChange: (v) => saveOne('asrMode', v), minWidth: 140 },
+                h('option', { value: 'local' }, '本地（要装）'), h('option', { value: 'cloud' }, '云端 API'))),
+            mode === 'cloud'
+              ? h('div', null,
+                h('div', { 'data-bd-setrow': '' },
+                  h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API 地址'),
+                    h('div', { 'data-bd-ds': '' }, '填到 /v1 就行，会自动补 /audio/transcriptions。例：https://api.siliconflow.cn/v1')),
+                  h(DraftInput, { value: cfg.asrCloudUrl || '', onCommit: (v) => saveOne('asrCloudUrl', v.trim()), placeholder: 'https://api.siliconflow.cn/v1' })),
+                h('div', { 'data-bd-setrow': '' },
+                  h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '模型名'),
+                    h('div', { 'data-bd-ds': '' }, '如 FunAudioLLM/SenseVoiceSmall（硅基流动）、whisper-1（OpenAI）')),
+                  h(DraftInput, { value: cfg.asrCloudModel || '', onCommit: (v) => saveOne('asrCloudModel', v.trim()), placeholder: 'FunAudioLLM/SenseVoiceSmall' })),
+                h('div', { 'data-bd-setrow': '' },
+                  h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API Key'),
+                    h('div', { 'data-bd-ds': '' }, cloud.hasKey ? '已存过 key，留空就不改' : '还没填过')),
+                  h(DraftInput, { value: '', type: 'password', onCommit: (v) => { if (v.trim()) saveOne('asrCloudKey', v.trim()) }, placeholder: cloud.hasKey ? '已存 key（留空不变）' : 'sk-…' })),
+                h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
+                  '云端按音频时长计费，通常几分钱一条；不想花这个钱就切回本地。'))
+              : h('div', null,
+                asr.ready ? null : h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '10px' } },
+                  h('button', {
+                    'data-bd-btn': '', className: 'primary sm', disabled: asrRunning,
+                    onClick: () => installEnv('asr'),
+                  }, asrRunning ? '安装中…' : '一键安装转写后端'),
+                  h('span', { 'data-bd-ds': '', style: { fontSize: '12px', color: 'var(--t2)' } }, '约 200MB，装完首次转写还要下模型')),
+                asr.ready ? null : h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
+                  '装不上也别纠结：把上面的「转写方式」换成云端 API，或者干脆不转写——会用标题/简介/封面识图兜底。')),
+            envJobView(['asr']),
+            mode === 'local' ? h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '本地模型大小'), h('div', { 'data-bd-ds': '' }, 'small 最快、large 最准也最慢（只影响本地转写）')),
               Select({ value: cfg.asrModel || 'small', onChange: (v) => saveOne('asrModel', v), minWidth: 130 },
-                h('option', { value: 'small' }, 'small'), h('option', { value: 'medium' }, 'medium'), h('option', { value: 'large' }, 'large')))))
+                h('option', { value: 'small' }, 'small'), h('option', { value: 'medium' }, 'medium'), h('option', { value: 'large' }, 'large'))) : null))
         }
 
         /* 私信 */
