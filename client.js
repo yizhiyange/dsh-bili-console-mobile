@@ -762,6 +762,16 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 让 AI 看图给素材写备注（懒得打字就用这个） */
+      const autoNoteAssets = async () => {
+        try {
+          toast_('AI 正在看图写备注，稍微等一下…')
+          const r = await jpost('/assets/auto-note', {})
+          if (!r || !r.ok) return toast_('失败：' + ((r && r.error) || ''))
+          toast_('写好了 ' + (r.updated || 0) + ' 条备注')
+          renderAssetsInto(r.items || [])
+        } catch (e) { toast_('失败：' + String(e?.message ?? e)) }
+      }
       /** 把素材库导出到手机可见目录（proot 路径用户在文件管理器里看不到） */
       const exportAssets = async () => {
         try {
@@ -2357,6 +2367,7 @@ window.__ModuleLoader__.load({
             }),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: pickAndUploadAssets }, '📷 从相册/文件选素材'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: autoNoteAssets }, '🤖 AI 帮我写备注'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: exportAssets }, '📤 导出到手机'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: importAssets }, '📥 从手机导入'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开插件内目录'),
