@@ -160,8 +160,9 @@ def _fit_font(font_path, text, max_w, draw, start=86, min_size=34):
         return None, min_size
 
 
-def render_card(card, idx, total, W, H, font_path):
-    """返回 (底图, 文字层)。文字层单独一层是为了做淡入动画（不用每帧重排文字）。"""
+def render_card(card, idx, total, W, H, font_path, layout=None):
+    """返回 (底图, 文字层)。文字层单独一层是为了做淡入动画（不用每帧重排文字）。
+    layout：None/'auto' = 按 idx 轮换 5 种；0~4 = 固定用某一种（用户可在设置里选）"""
     from PIL import Image, ImageDraw, ImageFont
 
     title = clean_text(card.get('title') or '')
@@ -199,7 +200,15 @@ def render_card(card, idx, total, W, H, font_path):
     if f_small:
         d.text((48, 38), '第 %d / %d 页' % (idx + 1, total), font=f_small, fill=(126, 136, 152, 255))
 
-    variant = idx % 5
+    # 版式：用户在设置里指定了就固定用它，'auto' 就轮换（2026-11-1）
+    try:
+        lg = str(layout if layout is not None else (card.get('layout') or 'auto'))
+    except Exception:
+        lg = 'auto'
+    if lg in ('0', '1', '2', '3', '4'):
+        variant = int(lg)
+    else:
+        variant = idx % 5
     pad = 80
 
     if variant == 0 and title:
@@ -306,9 +315,34 @@ def render_card(card, idx, total, W, H, font_path):
     return base, layer
 
 
-def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%'):
-    """edge-tts：免费、不需要 key，只要求联网。失败返回 False
-    微软原生支持 语速 rate / 音调 pitch / 音量 volume（2026-11-1 全开放）"""
+def _tts_http(text, out_file, url, voice):
+    """调用外部 TTS 服务（2026-11-1 加）
+    为什么要它：微软的声线再好也就那几个，想用「大肥鱼」这种社区训练的声线，
+    得跑 GPT-SoVITS / ChatTTS / vits-simple-api 这类本地服务。**插件不打包模型**
+    （几个 G，谁装插件都要白下载），只负责把文字发给你的服务、拿回音频。
+    约定：POST JSON {text, voice?} → 返回音频二进制（mp3/wav 都行，ffmpeg 能读）"""
+    try:
+        import urllib.request
+        body = json.dumps({'text': text, 'voice': voice or ''}).encode('utf-8')
+        req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = r.read()
+        if len(data) < 800:
+            return False
+        with open(out_file, 'wb') as f:
+            f.write(data)
+        return True
+    except Exception as e:
+        log('外部 TTS 调用失败：%s' % str(e)[:120])
+        return False
+
+
+def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%', engine='edge', url=''):
+    """配音合成。
+    engine=edge（默认）：微软 edge-tts，免费、内置、零下载
+    engine=http        ：把文字发给自建/第三方 TTS 服务（开源声线走这条），插件本身不打包模型"""
+    if engine == 'http' and url:
+        return _tts_http(text, out_mp3, url, voice)
     try:
         import edge_tts
     except Exception:
@@ -350,7 +384,25 @@ def probe_duration(ff, path):
     return 0.0
 
 
+def render_preview(spec_path):
+    """只渲染一张 PNG 当预览（不编码视频，秒出）"""
+    from PIL import Image
+    spec = json.load(open(spec_path, 'r', encoding='utf-8'))
+    out = spec.get('out') or 'preview.png'
+    W = int(spec.get('width') or 854)
+    H = int(spec.get('height') or 480)
+    cards = spec.get('cards') or [{'title': '预览标题', 'lines': ['这里是一行正文']}]
+    idx = int(spec.get('previewIndex') or 0)
+    card = cards[min(idx, len(cards) - 1)]
+    base, layer = render_card(card, idx, max(len(cards), idx + 1), W, H, find_font(), spec.get('layout') or 'auto')
+    Image.alpha_composite(base, layer).convert('RGB').save(out)
+    log('预览图：%s' % out)
+    return 0
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == '--preview':
+        return render_preview(sys.argv[2])
     if len(sys.argv) < 2:
         log('用法: python make_video.py spec.json')
         return 2
@@ -398,6 +450,8 @@ def main():
                 voice.get('rate') or '+0%',
                 voice.get('pitch') or '+0Hz',
                 voice.get('volume') or '+0%',
+                voice.get('engine') or 'edge',
+                voice.get('url') or '',
             )
             if not good:
                 ok_all = False
@@ -490,7 +544,7 @@ def main():
     try:
         from PIL import Image
         for i, card in enumerate(cards):
-            base, layer = render_card(card, i, len(cards), W, H, font_path)
+            base, layer = render_card(card, i, len(cards), W, H, font_path, spec.get('layout') or 'auto')
             full = Image.alpha_composite(base, layer).convert('RGB')
             frames = max(1, int(durs[i] * fps))
             fade = max(1, int(fps * 0.35))     # 0.35 秒淡入
