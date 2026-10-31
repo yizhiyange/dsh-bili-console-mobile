@@ -823,6 +823,31 @@ window.__ModuleLoader__.load({
           try { loadAssets() } catch { /* 列表稍后刷新 */ }
         } catch (e) { toast_('导入失败：' + String(e?.message ?? e)) }
       }
+      /** 测一下文生视频（CogVideoX，排队较久），成功后直接在卡片里播放 */
+      const testCogVideo = async () => {
+        try {
+          const box = document.querySelector('[data-bd-vidpv]')
+          if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">已提交，排队中…免费额度可能要等 1~5 分钟，别锁屏</div>'
+          toast_('已提交生成，等 1~5 分钟…')
+          const r = await jpost('/video/test-cogvideo', {})
+          if (!r || !r.ok) {
+            if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">没生成出来：' + ((r && r.error) || '') + '</div>'
+            return toast_('✗ ' + ((r && r.error) || '失败'))
+          }
+          toast_('✓ 生成了（' + Math.round((r.size || 0) / 1024) + 'KB）')
+          if (box) {
+            box.innerHTML = ''
+            const v = document.createElement('video')
+            v.controls = true; v.playsInline = true; v.preload = 'metadata'
+            v.style.cssText = 'width:100%;max-width:420px;border-radius:10px;border:1px solid var(--line);background:#000;display:block'
+            v.src = API + '/publish/video-file?n=' + encodeURIComponent(r.name)
+            const tip = document.createElement('div')
+            tip.style.cssText = 'font-size:11.5px;color:var(--t3);margin-top:6px'
+            tip.textContent = '这就是开场片段的样子（每次不同）。生成视频时会拼在正片最前面。'
+            box.appendChild(v); box.appendChild(tip)
+          }
+        } catch (e) { toast_('✗ ' + String(e?.message ?? e)) }
+      }
       /** 测一下文生图接口（智谱 CogView-3-Flash 免费，先验通了再开） */
       const testImageGen = async () => {
         try {
@@ -2509,7 +2534,12 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
           Card({ title: '开场动态（可选，AI 生视频）', sub: '用 CogVideoX 生成 3 秒片头；排队久但只在开头用一次' },
             ToggleRow({ label: '生成开场动态', note: '开了之后：整条片子先渲染好，再额外生成一段 3 秒 AI 动态拼在最前面。⚠️ 免费额度要排队，通常等 1~5 分钟；等太久会放弃并保留正常版本，不会毁掉已经做好的片子。用的是上面「画面生成模型」的地址和 Key', on: !!cfg.videoCogVideo, onChange: (v) => saveOne('videoCogVideo', v) }),
-            !!cfg.videoCogVideo && Input({ defaultValue: cfg.videoCogVideoModel || 'cogvideox-flash', placeholder: '视频模型名，默认 cogvideox-flash', onBlur: (e) => saveOne('videoCogVideoModel', String(e.target.value || '').trim(), '开场视频模型') })),
+            !!cfg.videoCogVideo && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+              Input({ defaultValue: cfg.videoCogVideoModel || 'cogvideox-flash', placeholder: '视频模型名，默认 cogvideox-flash', onBlur: (e) => saveOne('videoCogVideoModel', String(e.target.value || '').trim(), '开场视频模型') }),
+              h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: testCogVideo }, '🎬 测一下能不能生视频'),
+                h('span', { style: { fontSize: '11px' } }, '会真的消耗一次生成机会，且要等几分钟')),
+              h('div', { 'data-bd-vidpv': '' }))),
           Card({ title: '画面生成模型（可选，进阶）', sub: '用文生图接口给每张卡片画背景图；不填就用纯色卡片' },
             ToggleRow({ label: '启用画面生成', note: '开了才联网调文生图接口，每张卡片生成一张背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', on: !!cfg.videoImageEnabled, onChange: (v) => saveOne('videoImageEnabled', v) }),
             !!cfg.videoImageEnabled && h('div', { 'data-bd-imgmodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
