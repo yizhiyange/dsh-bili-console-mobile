@@ -658,8 +658,17 @@ img.avatar{border:1px solid var(--line);}
       toggleRow('自动评论并 @', '开着才会真发评论；关了就只挑不发，不打扰任何人', !!c.autoComment, 'autoComment') +
       setRow('@ 谁', '评论结尾 @ 这个人', inputHTML('mentionName', drafting.mentionName != null ? drafting.mentionName : (c.mentionName || ''), '@某人')) +
       setRow('每轮最多评论', '一轮里最多发几条', stepperHTML('commentPerRound', c.commentPerRound || 0, '条')) +
+      toggleRow('点赞（值得看）', '评级「值得看」时顺手点个赞', !!c.autoLike, 'autoLike') +
+      toggleRow('投币（值得看）', '会花自己的币，每日有上限', !!c.autoCoin, 'autoCoin') +
+      setRow('每天最多投几个币', '防止一口气花光', stepperHTML('coinPerDay', c.coinPerDay || 0, '个')) +
       toggleRow('回复评论', '别人回复你的评论时，它接一句', !!c.replyToComments, 'replyToComments') +
       setRow('每轮回复几条', '回评论的轮次上限', stepperHTML('replyPerRound', c.replyPerRound || 0, '条')));
+
+    var sourceCard = card('视频从哪来', '固定关键词会一直捞同一个池子，推荐流是活水', '',
+      toggleRow('首页个性化推荐流', 'B站按你这个账号的口味实时推的，最新最相关', c.useHomeFeed !== false, 'useHomeFeed') +
+      toggleRow('关键词搜索', '用上面填的关键词去搜；关键词也会慢慢培养账号的推荐口味', c.useKeywordSearch !== false, 'useKeywordSearch') +
+      toggleRow('两级筛选（省 token）', '批量粗筛后再取字幕深判，省约 80% 调用', c.triage !== false, 'triage') +
+      setRow('细看几条', '粗筛后真正取字幕深判的条数', stepperHTML('triageTop', c.triageTop || 5, '条')));
 
     var asr = st().asr || {};
     var asrBadge = asr.ready
@@ -722,7 +731,7 @@ img.avatar{border:1px solid var(--line);}
       '<button class="btn ghost sm" data-act="reload">重新载入</button>' +
       '<button class="btn primary sm" data-act="saveall">保存设置</button></div>');
 
-    return kwCard + comment + pick + dm + rep + visionCard + memCard + env + adv + saveCard;
+    return kwCard + sourceCard + comment + pick + dm + rep + visionCard + memCard + env + adv + saveCard;
   }
 
   // ============ 发布页（2026-10-31 新增：动态你自己写、视频点启动才发） ============
