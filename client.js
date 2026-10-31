@@ -1873,9 +1873,46 @@ window.__ModuleLoader__.load({
             toast_(r && r.ok ? '投稿已提交（B站还要审核）' : ('投稿失败：' + ((r && (r.error || r.message)) || '未知')))
           } catch (e) { toast_('投稿失败：' + String(e?.message ?? e)) }
         }
+        /** 一键生成：AI 写文案 → 本地渲染 → 自动把路径填进下面的投稿表单 */
+        const startGen = async () => {
+          try {
+            const r = await jpost('/publish/genvideo', { topic: readVal('[data-bd-vtopic] input') })
+            if (!r || !r.ok) return toast_((r && r.error) || '启动失败')
+            toast_('开始生成，进度看这张卡片')
+            const tick = async () => {
+              try {
+                const s = await jget('/publish/genvideo/status')
+                const bar = document.querySelector('[data-bd-vgbar]')
+                const txt = document.querySelector('[data-bd-vgtxt]')
+                const lg = document.querySelector('[data-bd-vglog]')
+                if (bar) bar.style.width = Math.min(100, Number(s.pct) || 0) + '%'
+                if (txt) txt.textContent = (s.error ? ('失败：' + s.error) : (s.done ? '完成' : (s.phase || ''))) + ' ' + (Number(s.pct) || 0) + '%'
+                if (lg && s.log) lg.textContent = s.log.join('\n')
+                if (s.done && s.outPath) {
+                  const inp = document.querySelector('[data-bd-vidpath] input')
+                  if (inp) { inp.value = s.outPath; inp.dispatchEvent(new Event('input', { bubbles: true })) }
+                  toast_('生成好了，路径已自动填进「投稿视频」')
+                  return
+                }
+                if (s.error) return
+                setTimeout(tick, 1500)
+              } catch { setTimeout(tick, 2500) }
+            }
+            setTimeout(tick, 1200)
+          } catch (e) { toast_('启动失败：' + String(e?.message ?? e)) }
+        }
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '发布'),
-            h('span', { className: 's' }, '发动态 / 投稿视频——内容你自己写，插件只负责发')),
+            h('span', { className: 's' }, '生成 / 发动态 / 投稿视频——内容你自己把关')),
+          Card({ title: '一键生成视频（最简图文）', sub: 'AI 写文案 → 本地渲染，零额外 API 费；首次要装约 30MB 渲染组件' },
+            h('div', { 'data-bd-input': '', 'data-bd-vtopic': '' },
+              h('input', { placeholder: '主题（留空就用今天刷到的内容）' })),
+            h('div', { style: { marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: startGen }, '生成视频'),
+              h('div', { 'data-bd-upbar': '', style: { flex: 1, minWidth: '110px' } },
+                h('i', { 'data-bd-vgbar': '', style: { width: '0%' } })),
+              h('span', { 'data-bd-ds': '', 'data-bd-vgtxt': '', style: { whiteSpace: 'nowrap' } }, '空闲')),
+            h('div', { 'data-bd-vglog': '', style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '120px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' } }, '')),
           Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
             h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
               h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
