@@ -219,6 +219,14 @@ img.avatar{border:1px solid var(--line);}
   /* 这两处页面里有内联 font-size:13px，手机上统一放大 */
   textarea{font-size:15px !important;}
   input,select{font-size:15px !important;}
+  /* 设置行手机上改上下排：左边说明不再和控件挤在一行（看不全的主因） */
+  .guard-row{flex-wrap:wrap;}
+  .guard-row .txt{flex:1 1 100%;}
+  .guard-row .selectbox,.guard-row .stepper,.guard-row .inputbox{width:100%;}
+  .guard-row .inputbox{width:100% !important;}
+  .selpop{max-width:90vw;}
+  .lb{font-size:14.5px;}
+  .ds{font-size:13px;}
 }
 </style>
 </head>
@@ -761,11 +769,14 @@ img.avatar{border:1px solid var(--line);}
       '</div>');
 
     var cg = cfg();
+    var epList = (st().chain && st().chain.endpoints) || [];
     var genSetCard = card('视频生成设置', '独立配置，和发评论的分开', '',
-      toggleRow('配音（需联网）', '免费 edge-tts；关掉=纯画面、渲染不联网', cg.videoVoice !== false, 'videoVoice') +
-      toggleRow('用 AI 写稿', '关掉=用当天刷到的标题拼合集，不需要 key', cg.videoUseAI !== false, 'videoUseAI') +
-      setRow('清晰度', '自动=电脑 720p / 手机 480p', selectHTML('videoQuality', cg.videoQuality || 'auto', [['auto', '自动'], ['720', '720p'], ['480', '480p 省电']])) +
-      setRow('最多几张卡片', '手机建议 4 张', stepperHTML('videoMaxCards', cg.videoMaxCards || 6, '张')));
+      toggleRow('配音（需联网）', '免费 edge-tts 合成旁白，要连微软服务器；关掉=纯画面、渲染全程不联网（首次装 30MB 依赖还是要联网一次）', cg.videoVoice !== false, 'videoVoice') +
+      toggleRow('用 AI 写稿（模型的开关）', '这就是「关掉模型」的开关：关掉后完全不跑模型、不花 key，用当天刷到的标题拼合集', cg.videoUseAI !== false, 'videoUseAI') +
+      setRow('清晰度', '默认 720p；1080p 更清楚但更慢；480p 会糊，只建议极端省电', selectHTML('videoQuality', cg.videoQuality || '720', [['720', '720p（默认）'], ['1080', '1080p'], ['480', '480p 省电']])) +
+      setRow('视频卡片数（画面张数）', '指视频里翻页的文字画面有几张（PPT 页数），不是人格卡；人格卡自动沿用「人设」页的配置。越多越长；手机建议 4 张', stepperHTML('videoMaxCards', cg.videoMaxCards || 6, '张')) +
+      setRow('模型从哪来', '「DSH 模型」= 直接读 DSH 设置页里配好的模型（不走发评论的降级链，两边的钱可以分开算）；「跟评论链」= 和发评论完全同一条降级链', selectHTML('videoModelSource', cg.videoModelSource || 'dsh', [['dsh', 'DSH 模型（推荐）'], ['chain', '跟评论同一条链']])) +
+      setRow('写稿用哪个模型', epList.length ? ('列表就是上面来源里的模型（名字 = DSH 设置页里你看到的）；不选就自动用第一个可用的。当前 ' + epList.length + ' 个可用') : '现在没有可用模型——开 AI 也会自动退回模板合集（不需要 key）', selectHTML('videoModel', cg.videoModel || '', [['', '自动']].concat(epList.map(function (e) { return [e.id, e.label || e.model || e.id] })))));
 
     // --- 动态卡片：纯手动，AI 不代写 ---
     var dynText = S.dynText || '';
