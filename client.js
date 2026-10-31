@@ -1029,6 +1029,15 @@ window.__ModuleLoader__.load({
         catch (e) { toast_('清空失败：' + String(e?.message ?? e)) }
       }
       /** 撤回：把 AI 刚发出去的那条评论从 B站 删掉（只能删自己发的） */
+      /** 重置今日额度（不想改上限、就是想清零重来） */
+      const resetQuota = async () => {
+        try {
+          const r = await jpost('/quota/reset', {})
+          if (!r || !r.ok) return toast_('重置失败：' + ((r && r.error) || ''))
+          const b = (r && r.before) || {}
+          toast_('已重置：原来挑了 ' + (b.picked || 0) + ' 条、发了 ' + (b.count || 0) + ' 条，现在都是 0')
+        } catch (e) { toast_('重置失败：' + String(e?.message ?? e)) }
+      }
       const retractLastOne = async () => {
         const cnt = (st.posted && st.posted.count) || 0
         if (!cnt) return toast_('账本是空的：没有可撤回的内容')
@@ -1235,7 +1244,11 @@ window.__ModuleLoader__.load({
                   'data-bd-btn': '', className: 'ghost sm', onClick: retractLastOne,
                   disabled: !((st.posted && st.posted.count) || 0),
                   title: '把 AI 刚发出去的那条评论删掉（只删自己发的）',
-                }, '撤回上一条' + (((st.posted && st.posted.count) || 0) ? ('（' + st.posted.count + '）') : ''))))),
+                }, '撤回上一条' + (((st.posted && st.posted.count) || 0) ? ('（' + st.posted.count + '）') : '')),
+                h('button', {
+                  'data-bd-btn': '', className: 'outline sm', onClick: resetQuota,
+                  title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
+                }, '重置今日额度')))),
           h('div', { 'data-bd-rowflex': '' },
             Card({ title: '降级链', sub: null, right: Tag({ c: ep.length ? 'green' : 'red', children: ep.length ? (ep.length + ' 节') : '空' }) },
               h('div', { 'data-bd-sum': '' }, ep.length ? ('当前生效：' + (ep[0] ? ep[0].label : '—') + '；出问题自动切下一节' + ((st.chain && st.chain.hostPresets) ? ('（含 ' + st.chain.hostPresets + ' 个 DSH 预设）') : '')) : '还没加模型：去「模型与密钥」加一个并加入降级链。'),
