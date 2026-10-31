@@ -485,8 +485,13 @@ window.__ModuleLoader__.load({
           }, o.label))))
     }
 
-    const Input = ({ value, onChange, placeholder, type, onBlur, style }) => h('div', { 'data-bd-input': '', style },
-      h('input', { type: type || 'text', value: value ?? '', placeholder: placeholder || '', onChange: (e) => onChange(e.target.value), onBlur }))
+    const Input = ({ value, onChange, placeholder, type, onBlur, style, defaultValue }) => {
+      // 受控（有 onChange）走 value；非受控（只有 onBlur 提交）走 defaultValue，避开 2 秒轮询覆盖草稿
+      const p = { type: type || 'text', placeholder: placeholder || '', onBlur }
+      if (onChange) { p.value = value ?? ''; p.onChange = (e) => onChange(e.target.value) }
+      else { p.defaultValue = defaultValue ?? ''; p.key = defaultValue }
+      return h('div', { 'data-bd-input': '', style }, h('input', p))
+    }
 
     const Stepper = ({ value, onStep }) => h('span', { 'data-bd-stepper': '' },
       h('button', { onClick: () => onStep(-1) }, '−'),
@@ -2003,13 +2008,20 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '写稿用哪个模型'),
                 h('div', { 'data-bd-ds': '' }, (() => {
                   const eps = (st.chain && st.chain.endpoints) || []
-                  return '「DSH 模型」= 直接读 DSH 设置页里配好的模型（不走发评论的降级链）；「跟评论链」= 和发评论完全同一条降级链。现在 DSH 里有 ' + eps.length + ' 个可用模型'
+                  return '「DSH 模型」= 直接读 DSH 设置页里配好的模型（不走发评论的降级链）；「跟评论链」= 和发评论完全同一条降级链；「自定义」= 下面单独填一套接口/模型/Key，只给写稿用。现在 DSH 里有 ' + eps.length + ' 个可用模型'
                     + (eps.length ? '' : '；选「不用模型」则连 key 都不需要')
                 })())),
               Select({ value: (cfg.videoUseAI === false ? 'off' : (cfg.videoModelSource || 'dsh')), onChange: (v) => { if (v === 'off') { saveOne('videoUseAI', false) } else { saveOne('videoUseAI', true); saveOne('videoModelSource', v) } }, minWidth: 140 },
                 h('option', { value: 'off' }, '不用模型（模板合集，零 key）'),
                 h('option', { value: 'dsh' }, 'DSH 模型（推荐）'),
-                h('option', { value: 'chain' }, '跟评论同一条链'))),
+                h('option', { value: 'chain' }, '跟评论同一条链'),
+                h('option', { value: 'custom' }, '自定义（写稿专用）'))),
+            (cfg.videoUseAI !== false && cfg.videoModelSource === 'custom') && h('div', { 'data-bd-custommodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
+              h('div', null, '写稿专用自定义模型（只给视频文案用，和发评论的完全分开；兼容 OpenAI 格式的接口都行）'),
+              h(Input, { defaultValue: cfg.videoCustomBaseUrl || '', placeholder: '接口地址，如 https://open.bigmodel.cn/api/paas/v4', onBlur: (e) => saveOne('videoCustomBaseUrl', String(e.target.value || '').trim(), '写稿接口地址') }),
+              h(Input, { defaultValue: cfg.videoCustomModel || '', placeholder: '模型名，如 glm-4-flash', onBlur: (e) => saveOne('videoCustomModel', String(e.target.value || '').trim(), '写稿模型名') }),
+              h(Input, { defaultValue: cfg.videoCustomKey || '', type: 'password', placeholder: '这个模型的 API Key（存本地配置，不会上传）', onBlur: (e) => saveOne('videoCustomKey', String(e.target.value || '').trim(), '写稿 Key') }),
+              h(Input, { defaultValue: cfg.videoCustomName || '', placeholder: '显示名（可选，如「免费小模型」）', onBlur: (e) => saveOne('videoCustomName', String(e.target.value || '').trim(), '显示名') })),
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '指定具体模型'), h('div', { 'data-bd-ds': '' }, '列表就是上面选的来源里的模型（名字 = DSH 设置页里你看到的）；不选就自动用第一个可用的')),
               Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
@@ -2026,6 +2038,12 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: openAssets }, '打开素材文件夹'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadAssets }, '刷新列表')),
             h('div', { 'data-bd-assets': '', style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } }, '')),
+          Card({ title: '画面生成模型（可选，进阶）', sub: '用文生图接口给每张卡片画背景图；不填就用纯色卡片' },
+            ToggleRow({ label: '启用画面生成', note: '开了才联网调文生图接口，每张卡片生成一张背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', on: !!cfg.videoImageEnabled, onChange: (v) => saveOne('videoImageEnabled', v) }),
+            !!cfg.videoImageEnabled && h('div', { 'data-bd-imgmodel': '', style: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '10px 12px', margin: '4px 0', background: 'var(--gray-bg)', borderRadius: '8px', fontSize: '12px', color: 'var(--t2)' } },
+              h(Input, { defaultValue: cfg.videoImageBaseUrl || '', placeholder: '接口地址（OpenAI 兼容），如 https://api.siliconflow.cn/v1', onBlur: (e) => saveOne('videoImageBaseUrl', String(e.target.value || '').trim(), '画面接口地址') }),
+              h(Input, { defaultValue: cfg.videoImageModel || '', placeholder: '模型名，如 Kwai-Kolors/Kolors', onBlur: (e) => saveOne('videoImageModel', String(e.target.value || '').trim(), '画面模型名') }),
+              h(Input, { defaultValue: cfg.videoImageKey || '', type: 'password', placeholder: '这个接口的 API Key（存本地配置，不会上传）', onBlur: (e) => saveOne('videoImageKey', String(e.target.value || '').trim(), '画面 Key') }))),
           Card({ title: '发动态', sub: '纯手动：AI 不代写、不自动发' },
             h('div', { 'data-bd-input': '', 'data-bd-dyninput': '', style: { height: 'auto', padding: '8px 12px', alignItems: 'stretch' } },
               h('textarea', { placeholder: '写你想发的动态文字…', rows: 4 })),
