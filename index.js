@@ -46,7 +46,7 @@ import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clear
 import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
 import { chat } from './lib/llm.mjs'
 import { describeImage, visionReady } from './lib/vision.mjs'
-import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng } from './lib/videogen.mjs'
+import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng, testImageGen } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -817,6 +817,18 @@ export function apply(ctx, _config) {
         }
         if (n) logLine(home, `清空视频 ${n} 个，腾出 ${Math.round(freed / 1048576)}MB`)
         return sendJson(res, 200, { ok: true, deleted: n, freed })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 测一下「文生图」接口能不能用（智谱 CogView-3-Flash 免费，很多人想先验一下）
+    if (req.method === 'POST' && path === '/video/test-image') {
+      try {
+        const c = loadConfig(home)
+        if (!c.videoImageBaseUrl || !c.videoImageModel) {
+          return sendJson(res, 200, { ok: false, error: '还没填文生图接口地址或模型名（智谱填 https://open.bigmodel.cn/api/paas/v4 + cogview-3-flash）' })
+        }
+        const out = await testImageGen(c)
+        if (!out.ok) return sendJson(res, 200, { ok: false, error: out.error })
+        return sendJson(res, 200, { ok: true, model: c.videoImageModel, size: out.size })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
