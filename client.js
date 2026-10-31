@@ -768,7 +768,7 @@ window.__ModuleLoader__.load({
           toast_('正在本地分析音频，几秒钟就好…')
           const r = await jpost('/assets/analyze-audio', {})
           if (!r || !r.ok) return toast_('失败：' + ((r && r.error) || ''))
-          toast_('写好了 ' + (r.updated || 0) + ' 条音乐备注')
+          toast_('写好了 ' + (r.updated || 0) + ' 条音乐备注' + (r.warn ? ('。' + r.warn) : ''))
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('失败：' + String(e?.message ?? e)) }
       }
