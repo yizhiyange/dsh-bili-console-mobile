@@ -45,6 +45,7 @@ import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
 import { processRss, systemMem, freeMemory, powerSaving } from './lib/memsave.mjs'
+import { chat } from './lib/llm.mjs'
 import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
