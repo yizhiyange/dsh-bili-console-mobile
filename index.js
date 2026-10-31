@@ -36,7 +36,7 @@ import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
-import { asrStatus, asrReadiness, asrDiag } from './lib/asr.mjs'
+import { asrStatus, asrReadiness, asrDiag, transcribeFile } from './lib/asr.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -865,13 +865,35 @@ export function apply(ctx, _config) {
         const items = listAssets(home)
         const out = []
         let done = 0
+        let asrFail = 0
+        let asrTried = 0
         for (const it of items) {
           let note = it.note || ''
           if (it.kind === 'audio' && !String(note).trim()) {
             try {
               const r = await runPy(py, [script, join(dir, it.file)])
-              const line = String((r.stdout || '').trim()).split('\n').pop()
-              if (r.ok && line && !/失败|不存在|读不出/.test(line)) { note = line.slice(0, 60); done++ }
+              let line = String((r.stdout || '').trim()).split('\n').pop()
+              if (r.ok && line && !/失败|不存在|读不出/.test(line)) {
+                // 有人声的音乐：光算快慢明暗不够，里面说的话才是重点。
+                // 本地转写能用就顺便听一遍，听出人话就补上"在说什么"（纯音乐听不出东西，自动跳过）
+                try {
+                  const ready = await asrReadiness(c, py).catch(() => ({ ready: false }))
+                  if (ready && ready.ready) {
+                    // 手机上 whisper 可能很慢，给 90 秒上限；超时就只用特征备注，别把请求挂死
+                    asrTried++
+                    const tr = await Promise.race([
+                      transcribeFile(py, join(dir, it.file), c.asrModel || 'small'),
+                      new Promise((r) => setTimeout(() => r({ ok: false, error: '转写超时' }), 90000)),
+                    ])
+                    if (!tr || !tr.ok) asrFail++
+                    const txt = String((tr && tr.ok && tr.text) || '').replace(/\s+/g, ' ').trim()
+                    // 少于 8 个字基本是纯音乐里的杂音/[音乐]，别写进备注
+                    if (txt.length >= 8) line = '人声大概在说「' + txt.slice(0, 28) + (txt.length > 28 ? '…' : '') + '」；' + line
+                  }
+                } catch { /* 转写不行就只用特征 */ }
+                note = line.slice(0, 90)
+                done++
+              }
             } catch { /* 单条失败跳过 */ }
           }
           if (!note) note = it.hint || ''
@@ -879,7 +901,11 @@ export function apply(ctx, _config) {
         }
         saveAssets(home, out)
         logLine(home, `本地识别音乐：处理 ${done} 个音频`)
-        return sendJson(res, 200, { ok: true, updated: done, items: listAssets(home) })
+        // 老实告诉用户「人声识别」到底成没成，别让人以为都识别到了
+        const warn = (asrTried > 0 && asrFail === asrTried)
+          ? '音乐特征分析成功了，但「人声/歌词」识别没跑起来（多半是 Whisper 模型没下载好，或装不上）。只影响"听出说了什么"，不影响快慢/明暗的判断。'
+          : ''
+        return sendJson(res, 200, { ok: true, updated: done, items: listAssets(home), warn })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 测一下识图模型能不能真看图（用一张 8x8 的小图问它是什么颜色/有什么）
