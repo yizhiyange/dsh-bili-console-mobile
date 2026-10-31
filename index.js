@@ -43,7 +43,7 @@ import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
-import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain } from './lib/videogen.mjs'
+import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -81,6 +81,9 @@ export const Config = !z ? undefined : z.object({
   coinPerDay: z.natural().default(2).extra('volatile', true),
   videoVoice: z.boolean().default(true).extra('volatile', true),
   videoVoiceName: z.string().default('zh-CN-XiaoxiaoNeural').extra('volatile', true),
+  videoVoiceRate: z.string().default('+0%').extra('volatile', true),
+  videoVoicePitch: z.string().default('+0Hz').extra('volatile', true),
+  videoVoiceVolume: z.string().default('+0%').extra('volatile', true),
   videoQuality: z.string().default('720').extra('volatile', true),
   videoUseAI: z.boolean().default(true).extra('volatile', true),
   videoMaxCards: z.natural().default(6).extra('volatile', true),
@@ -564,6 +567,15 @@ export function apply(ctx, _config) {
     }
     if (req.method === 'GET' && path === '/publish/genvideo/status') {
       return sendJson(res, 200, { ok: true, ...videoJobSnapshot() })
+    }
+    // 配音试听：用当前声线/语速/音调/音量念一句，返回 mp3（免费 edge-tts，需要联网）
+    if (req.method === 'POST' && path === '/publish/tts-preview') {
+      try {
+        const b = await readBody(req)
+        const c = loadConfig(home)
+        const r = await previewTts({ cfg: c, text: String(b.text || '').slice(0, 120) })
+        return sendJson(res, 200, r)
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 素材库（图片当背景 / 音频当 BGM；每条必须有备注，AI 靠备注判断何时用）
     if (req.method === 'GET' && path === '/assets') {
