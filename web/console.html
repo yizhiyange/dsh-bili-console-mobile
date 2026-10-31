@@ -778,8 +778,8 @@ img.avatar{border:1px solid var(--line);}
       setRow('模型从哪来', '「DSH 模型」= 直接读 DSH 设置页里配好的模型（不走发评论的降级链，两边的钱可以分开算）；「跟评论链」= 和发评论完全同一条降级链；「自定义」= 下面单独填一套接口/模型/Key，只给写稿用', selectHTML('videoModelSource', (cg.videoUseAI === false) ? 'off' : (cg.videoModelSource || 'dsh'), [['off', '不用模型（模板合集，零 key）'], ['dsh', 'DSH 模型（推荐）'], ['chain', '跟评论同一条链'], ['custom', '自定义（写稿专用）']])) +
       (cg.videoUseAI !== false && cg.videoModelSource === 'custom'
         ? '<div class="guard-row" style="flex-wrap:wrap;gap:8px"><div class="txt" style="flex:1 1 100%"><div class="lb">写稿专用自定义模型</div><div class="ds">兼容 OpenAI 格式的接口都行；Key 存本地配置，不会上传</div></div>' +
-          inputHTML('videoCustomBaseUrl', cg.videoCustomBaseUrl, '接口地址，如 https://open.bigmodel.cn/api/paas/v4') +
-          inputHTML('videoCustomModel', cg.videoCustomModel, '模型名，如 glm-4-flash') +
+          inputHTML('videoCustomBaseUrl', cg.videoCustomBaseUrl, '接口地址，一般是 https://xxx.xxx/v1 这种结尾带 /v1 的') +
+          inputHTML('videoCustomModel', cg.videoCustomModel, '模型名，照你服务商后台里写的填') +
           inputHTML('videoCustomKey', cg.videoCustomKey, 'API Key', 'password') +
           inputHTML('videoCustomName', cg.videoCustomName, '显示名（可选）') + '</div>'
         : '') +
@@ -787,8 +787,8 @@ img.avatar{border:1px solid var(--line);}
       toggleRow('画面生成模型（可选，进阶）', '用文生图接口给每张卡片画背景图；关掉/不填 = 纯色卡片，渲染离线也能跑', !!cg.videoImageEnabled, 'videoImageEnabled') +
       (cg.videoImageEnabled
         ? '<div class="guard-row" style="flex-wrap:wrap;gap:8px"><div class="txt" style="flex:1 1 100%"><div class="lb">文生图接口（OpenAI 兼容）</div></div>' +
-          inputHTML('videoImageBaseUrl', cg.videoImageBaseUrl, '如 https://api.siliconflow.cn/v1') +
-          inputHTML('videoImageModel', cg.videoImageModel, '模型名，如 Kwai-Kolors/Kolors') +
+          inputHTML('videoImageBaseUrl', cg.videoImageBaseUrl, '同上，结尾一般带 /v1') +
+          inputHTML('videoImageModel', cg.videoImageModel, '模型名，照你服务商后台里写的填') +
           inputHTML('videoImageKey', cg.videoImageKey, 'API Key', 'password') + '</div>'
         : ''));
 
