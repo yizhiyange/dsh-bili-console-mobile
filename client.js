@@ -231,6 +231,8 @@ window.__ModuleLoader__.load({
       box-shadow:0 8px 28px rgba(0,0,0,.18);animation:bdfade .18s ease-out;}
     @keyframes bdfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
     .narrow [data-bd-floatsave]{right:10px;bottom:96px;gap:8px;padding:7px 10px;}
+    /* 浮动保存条出现时，给内容底部留出空间，避免盖住最后几行设置 */
+    [data-bd-page].has-floatsave [data-bd-content]{padding-bottom:80px;}
     [data-bd-foot]{text-align:center;font-size:11px;color:var(--t3);padding:4px 0 10px;line-height:1.8;}
 
     [data-bd-mask]{position:fixed;inset:0;background:rgba(17,17,17,.45);display:none;align-items:center;justify-content:center;z-index:50;}
@@ -506,6 +508,9 @@ window.__ModuleLoader__.load({
       // 识图模型：用户一动过就不再被 2 秒轮询覆盖（visionTouched）；visionDirty 只用来提示"还没保存"
       const [visionTouched, setVisionTouched] = React.useState(false)
       const [visionDirty, setVisionDirty] = React.useState(false)
+      // 环境自检结果 / 进行中
+      const [envDiag, setEnvDiag] = React.useState(null)
+      const [envBusy, setEnvBusy] = React.useState(false)
       const [newKw, setNewKw] = React.useState('')
       // 设置页纯文本/数字输入：用本地草稿，避免被 2 秒轮询的 state 覆盖（与 keyword/persona 同策略）
       const [mentionDraft, setMentionDraft] = React.useState(null)
@@ -791,6 +796,16 @@ window.__ModuleLoader__.load({
           if (r && r.ok && !r.error) toast_('开始更新了，看下面的进度条')
           else toast_('没启动成：' + ((r && r.error) || '未知原因'))
         } catch (e) { toast_('启动更新失败：' + String(e?.message ?? e)) }
+      }
+      /** 重新检测 Python 环境：把探测细节摊出来（真没装 vs 没找到，一眼分辨） */
+      const recheckEnv = async () => {
+        setEnvBusy(true)
+        try {
+          const r = await jget('/env/diag')
+          setEnvDiag(r || null)
+          if (r && r.found) toast_('找到 Python：' + r.found.cmd + '（' + r.found.ver + '）')
+          else toast_('还是没找到 Python，下面列出了试过的每个路径')
+        } catch (e) { toast_('检测失败：' + String(e?.message ?? e)) } finally { setEnvBusy(false) }
       }
       const runNow = async () => { try { const r = await jpost('/run/now', { force: true }); toast_(r.message || (r.ok ? '已开始' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
       /** 清空所有视频的对话上下文（thread 模式产物） */
@@ -1230,7 +1245,7 @@ window.__ModuleLoader__.load({
           const asr = st.asr || {}
           blocks.push(Card({
             title: '每天挑与转写', sub: null,
-            right: Tag({ c: asr.ready ? 'green' : 'amber', children: asr.ready ? ('转写后端就绪 · ' + (asr.backend || '')) : '转写后端未装' }),
+            right: Tag({ c: asr.ready ? 'green' : 'gray', children: asr.ready ? ('转写后端就绪 · ' + (asr.backend || '')) : '可选功能 · 未装' }),
           },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每天最多挑几条'), h('div', { 'data-bd-ds': '' }, '全天总量：AI 一轮里从候选视频里挑出值得看的条数。挑满就收工，不贪多')),
@@ -1239,7 +1254,7 @@ window.__ModuleLoader__.load({
               label: '本地转写',
               note: asr.ready
                 ? ('没字幕时会下载音频，用本机 ' + (asr.backend || '转写后端') + ' 转成文字再看内容；慢几十秒，不花云端额度')
-                : ('没装后端：' + (asr.reason || '') + '。没装时没字幕的视频会直接跳过（装好后这个开关才有意义）'),
+                : ('这是可选功能，没装不影响挑视频和评论。没字幕的视频会直接跳过。想开的话，在终端跑：pip install faster-whisper（并确保 ffmpeg 可用）' + (asr.reason ? '；当前：' + asr.reason : '')),
               on: !!cfg.transcribe, onChange: (v) => saveOne('transcribe', v),
             }),
             h('div', { 'data-bd-setrow': '' },
@@ -1289,8 +1304,16 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '模型名'), h('div', { 'data-bd-ds': '' }, '免费视觉模型：glm-4v-flash / glm-4.6v-flash')),
               Input({ value: vModel || '', onChange: (v) => { setVModel(v); setVisionTouched(true); setVisionDirty(true) }, placeholder: 'glm-4v-flash' })),
             h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API Key'), h('div', { 'data-bd-ds': '' }, '留空 = 沿用已经存过的 key，不会清掉')),
-              Input({ value: vKey || '', onChange: (v) => { setVKey(v); setVisionTouched(true); setVisionDirty(true) }, placeholder: '留空沿用已存的 key', type: 'password' })),
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'API Key'),
+                h('div', { 'data-bd-ds': '' }, vs.hasKey
+                  ? ('已存的 key 是 ' + (vs.keyHint || '••••') + ' —— 留空就继续用它，不会被清掉')
+                  : '还没存过任何 key（留空 = 不启用识图）')),
+              Input({
+                value: vKey || '',
+                onChange: (v) => { setVKey(v); setVisionTouched(true); setVisionDirty(true) },
+                placeholder: vs.hasKey ? ('已存 ' + (vs.keyHint || '••••') + '，留空不变') : 'sk-…（还没存过）',
+                type: 'password',
+              })),
             h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: () => saveVision({ apiUrl: String(vUrl || '').trim(), modelName: String(vModel || '').trim(), apiKey: String(vKey || '').trim() || ((cfg.visionModel || {}).apiKey || '') }) }, '保存识图模型'),
               visionDirty ? Tag({ c: 'amber', children: '改动还没保存' }) : null,
@@ -1334,13 +1357,30 @@ window.__ModuleLoader__.load({
           const v = st.venv || {}
           const ready = Boolean(st.venvReady)
           const where = v.venvReady ? v.venvPath : (v.baseWithDeps || '')
+          // 分四种情况说人话：就绪 / venv在但依赖缺 / 有Python待装依赖 / 真没找到
           const desc = ready
             ? ('已就绪 · ' + (where || '系统 Python') + '（bilibili-api / mcp / aiohttp / qrcode 都在）')
-            : (v.basePython ? ('有 Python（' + v.basePython + '），但还没装依赖 —— 首次登录或跑一轮时会自动装，约 1-2 分钟，需联网') : '没检测到 Python 3。请先装 Python 3.10+（python.org），安装时勾选 “Add Python to PATH”')
-          blocks.push(Card({ title: '运行环境', sub: '依赖插件自己装，不用你手动 pip' },
+            : v.venvExists
+              ? ('插件自己的 venv 已经建好了（' + (v.venvPath || '') + '），但依赖还没装全 —— 首次登录或跑一轮时会自动补，约 1-2 分钟，需联网')
+              : v.basePython
+                ? ('有 Python（' + v.basePython + '），但还没装依赖 —— 首次登录或跑一轮时会自动装，约 1-2 分钟，需联网')
+                : '没找到 Python 3。点下面的「重新检测」能看到具体试过哪些路径；确认真的没装的话，装一个 Python 3.10+ 即可'
+          blocks.push(Card({
+            title: '运行环境', sub: '依赖插件自己装，不用你手动 pip',
+            right: Tag({ c: ready ? 'green' : 'amber', children: ready ? '就绪' : '待安装' }),
+          },
             h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, 'Python 依赖'), h('div', { 'data-bd-ds': '' }, desc)),
-              Tag({ c: ready ? 'green' : 'amber', children: ready ? '就绪' : '待安装' }))))
+              h('button', {
+                'data-bd-btn': '', className: 'ghost sm', disabled: envBusy,
+                onClick: recheckEnv,
+              }, envBusy ? '检测中…' : '重新检测')),
+            envDiag ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
+              h('div', null, '平台 ' + (envDiag.platform || '?') + '　找到：' + (envDiag.found ? (envDiag.found.cmd + '（' + envDiag.found.ver + '）') : '没有任何可用的 Python')),
+              (envDiag.tried || []).length ? h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7 } },
+                '试过的解释器（✓ 通 / ✗ 失败）：\n' + envDiag.tried.map((t) => (t.ok ? '✓ ' : '✗ ') + t.cmd + (t.ok ? ('  ' + t.ver) : (t.why ? ('  — ' + t.why) : ''))).join('\n')) : null,
+              h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)' } },
+                'venv：' + (envDiag.venv && envDiag.venv.exists ? ((envDiag.venv.ready ? '已就绪 · ' : '存在但依赖未装全 · ') + envDiag.venv.path) : '还没建'))) : null))
         }
 
         /* 高级（只读） */
@@ -1456,7 +1496,7 @@ window.__ModuleLoader__.load({
         h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveSettings }, '保存配置'),
         h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { setDirty({}); setPersona(null); setKws(null); setMentionDraft(null); setDmUidDraft(null); setFavDraft(null); toast_('已放弃改动，恢复成已保存的值') } }, '放弃')) : null
 
-      return h('div', { 'data-bd-page': '', ref: rootRef, className: narrow ? 'narrow' : '' },
+      return h('div', { 'data-bd-page': '', ref: rootRef, className: (narrow ? 'narrow' : '') + (unsaved ? ' has-floatsave' : '') },
         topbar,
         loginBar,
         banner,
