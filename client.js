@@ -836,7 +836,17 @@ window.__ModuleLoader__.load({
           else toast_('没启动成：' + ((r && r.error) || '未知原因'))
         } catch (e) { toast_('启动失败：' + String(e?.message ?? e)) }
       }
-      const runNow = async () => { try { const r = await jpost('/run/now', { force: true }); toast_(r.message || (r.ok ? '已开始' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
+      /** 没关键词就别跑：直接把人带到设置页去填（以前只弹个红字错误，看不出该干嘛） */
+      const needKeywords = () => {
+        if ((cfg.keywords || []).length) return false
+        toast_('还没设关键词：去「设置」填几个方向（比如 AI、数码），它才知道去哪找视频')
+        setPage('settings')
+        return true
+      }
+      const runNow = async () => {
+        if (needKeywords()) return
+        try { const r = await jpost('/run/now', { force: true }); toast_(r.message || (r.ok ? '已开始' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) }
+      }
       /** 清空所有视频的对话上下文（thread 模式产物） */
       const clearMemory = async () => {
         try { const r = await jpost('/memory/clear', {}); toast_(r.ok ? '已清空所有对话上下文' : '清空失败') }
@@ -871,7 +881,10 @@ window.__ModuleLoader__.load({
         toast_((add ? '整组加入 ' + list.length + ' 个' : '整组移出 ' + list.length + ' 个') + '：' + g.label)
       }
       /** 试跑：真搜、真让 AI 挑、写日报，但绝不发评论/私信 */
-      const runDry = async () => { try { const r = await jpost('/run/now', { force: true, dryRun: true }); toast_(r.message || (r.ok ? '已开始试跑' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
+      const runDry = async () => {
+        if (needKeywords()) return
+        try { const r = await jpost('/run/now', { force: true, dryRun: true }); toast_(r.message || (r.ok ? '已开始试跑' : '失败')) } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) }
+      }
       const dmCheck = async () => { try { const r = await jpost('/dm/check', {}); toast_(r.message || '已发起私信检查') } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } }
 
       /* ── 登录流程 ── */
@@ -943,6 +956,9 @@ window.__ModuleLoader__.load({
       /* ── 横幅 ── */
       let banner = null
       if (st.noAdapter) banner = h('div', { 'data-bd-banner': '', className: 'err' }, 'AI 起不来：模型没配对（NO_ADAPTER）。去「降级链」或「模型与密钥」里手动换一个已注册的模型，再手动跑一轮。')
+      else if (!(cfg.keywords || []).length) banner = h('div', { 'data-bd-banner': '' },
+        h('span', null, '还没设关键词 —— 填几个你感兴趣的方向（比如 AI、数码），它才知道去哪找视频'),
+        h('button', { onClick: () => setPage('settings') }, '去设置 →'))
       else if (st.safeMode) banner = h('div', { 'data-bd-banner': '' }, '安全模式：当前不会自动发评论、不会发私信。想真发时，到「设置」把「自动评论并 @」和「投递方式」打开。')
 
       /* ── 侧边导航 ── */
@@ -1236,9 +1252,27 @@ window.__ModuleLoader__.load({
 
       const renderSettings = () => {
         const kwList = String(kws || '').split('\n').map((s) => s.trim()).filter(Boolean)
+        // 关键词是"标签"型配置：加/删就**立刻保存**，不让用户再去找保存按钮
+        // （以前要回车添加 + 滚到底部点保存，用户打了字以为加上了，实际没生效 → 跑轮被拒，2026-10-31 修）
+        const kwSave = (arr) => {
+          const clean = arr.map((x) => String(x || '').trim()).filter(Boolean)
+          setKws(clean.join('\n'))
+          setDirty((d) => ({ ...d, keywords: false }))
+          saveOne('keywords', clean, '关键词')
+        }
+        const kwAdd = (v) => {
+          const t = String(v || '').trim()
+          if (!t) return false
+          if (kwList.includes(t)) { toast_('「' + t + '」已经在列表里了'); return false }
+          kwSave(kwList.concat([t]))
+          return true
+        }
+        const kwDel = (i) => {
+          const arr = kwList.slice(); arr.splice(i, 1); kwSave(arr)
+        }
         const kwChips = h('div', { 'data-bd-chips': '' },
           kwList.map((k, i) => h('span', { key: i, 'data-bd-chip': '' }, k,
-            h('button', { className: 'x', onClick: () => { const arr = kwList.slice(); arr.splice(i, 1); setKws(arr.join('\n')); setDirty((d) => ({ ...d, keywords: true })) } }, '×'))))
+            h('button', { className: 'x', onClick: () => kwDel(i) }, '×'))))
         const blocks = []
         blocks.push(h('div', { 'data-bd-pagetitle': '' },
           h('span', { className: 't' }, '设置'),
@@ -1265,15 +1299,27 @@ window.__ModuleLoader__.load({
         }
 
         /* 监听关键词 */
-        blocks.push(Card({ title: '监听关键词', sub: '回车添加，点 × 移除' },
+        blocks.push(Card({
+          title: '监听关键词', sub: '加完立刻生效，点 × 删掉',
+          right: kwList.length ? Tag({ c: 'gray', children: kwList.length + ' 个' }) : Tag({ c: 'amber', children: '还没填 · 跑不了' }),
+        },
           kwChips,
-          h('div', { style: { marginTop: '10px' } },
-            h('div', { 'data-bd-input': '' }, h('input', {
-              placeholder: '+ 输入后回车添加', value: newKw,
+          h('div', { style: { marginTop: '10px', display: 'flex', gap: '8px', alignItems: 'center' } },
+            h('div', { 'data-bd-input': '', style: { flex: 1 } }, h('input', {
+              placeholder: '输入关键词，比如「一只炎鸽」', value: newKw,
               onChange: (e) => setNewKw(e.target.value),
-              onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = newKw.trim(); if (v) { setKws((kws || '') + (kws ? '\n' : '') + v); setNewKw(''); setDirty((d) => ({ ...d, keywords: true })) } } },
-            }))),
-          h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } }, 'AI 拿这些词去 B站 搜视频；没填就用默认几组（DeepSeek Harness、DSH 插件等）。')))
+              onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); if (kwAdd(newKw)) setNewKw('') } },
+              // 失焦也自动加上：避免"打了字但没回车，以为已经加上了"（用户就踩过这个坑）
+              onBlur: () => { if (String(newKw || '').trim() && kwAdd(newKw)) setNewKw('') },
+            })),
+            h('button', {
+              'data-bd-btn': '', className: 'primary sm', disabled: !String(newKw || '').trim(),
+              onClick: () => { if (kwAdd(newKw)) setNewKw('') },
+            }, '添加')),
+          h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } },
+            kwList.length
+              ? 'AI 拿这些词去 B站 搜视频。加/删都立刻保存，不用再点别的按钮。'
+              : '⚠️ 一个都没填的话，「跑一轮」会被直接拒绝（它不知道该搜什么）。在上面输入一个词，按回车或点「添加」。')))
 
         /* 评论与互动 */
         blocks.push(Card({ title: '评论与互动', sub: null },
