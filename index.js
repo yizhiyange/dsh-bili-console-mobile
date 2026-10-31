@@ -88,6 +88,8 @@ export const Config = !z ? undefined : z.object({
   thinkLevel: z.string().default('off').extra('volatile', true),
   videoCogVideo: z.boolean().default(false).extra('volatile', true),
   videoCogVideoModel: z.string().default('cogvideox-flash').extra('volatile', true),
+  videoCogVideoBaseUrl: z.string().default('').extra('volatile', true),
+  videoCogVideoKey: z.string().default('').extra('volatile', true),
   videoLayout: z.string().default('auto').extra('volatile', true),
   videoTtsEngine: z.string().default('edge').extra('volatile', true),
   videoTtsUrl: z.string().default('').extra('volatile', true),
@@ -837,7 +839,7 @@ export function apply(ctx, _config) {
     if (req.method === 'POST' && path === '/video/test-cogvideo') {
       try {
         const c = loadConfig(home)
-        if (!c.videoImageKey) return sendJson(res, 200, { ok: false, error: '没填 API Key（跟生图共用那个）' })
+        if (!(c.videoCogVideoKey || c.videoImageKey)) return sendJson(res, 200, { ok: false, error: '没填 API Key（开场动态或画面生成里填一个都行）' })
         const dir = join(home, '.video')
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
         const r = await genOpeningVideo({ ...c, __dir: dir },
