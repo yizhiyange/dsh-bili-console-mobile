@@ -43,6 +43,7 @@ import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
 import { loadHostDeps } from './lib/hostdeps.mjs'
 import { ensureVenv, venvStatus, resolvePython, envDiagnostics, markReady, clearReady, clearDepCache } from './lib/pyenv.mjs'
+import { startVideoJob, videoJobSnapshot } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（实验性，默认关）
@@ -522,6 +523,22 @@ export function apply(ctx, _config) {
         }
         finally { try { cli.close() } catch { /* noop */ } }
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+
+    // 生成视频（最简图文口播）：AI 写文案 → 本地渲染，零额外 API 费（2026-10-31 加）
+    if (req.method === 'POST' && path === '/publish/genvideo') {
+      try {
+        const b = await readBody(req)
+        const c = loadConfig(home)
+        const r = startVideoJob({
+          home, cfg: c, chain: buildEndpoints(c, extractHostModels()),
+          topic: String(b.topic || '').slice(0, 120),
+        })
+        return sendJson(res, 200, r)
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    if (req.method === 'GET' && path === '/publish/genvideo/status') {
+      return sendJson(res, 200, { ok: true, ...videoJobSnapshot() })
     }
 
     // POST /publish/video —— 手动投稿视频（点启动才发；视频路径/标题/分区/标签由前端给）
