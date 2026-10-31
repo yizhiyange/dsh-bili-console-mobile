@@ -787,6 +787,38 @@ export function apply(ctx, _config) {
         return sendJson(res, 200, { ok: true, copied: n, from: ext })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
+    // 删掉某个已生成的视频（手机存储紧张，用户要求能删）
+    if (req.method === 'POST' && path === '/video/delete') {
+      try {
+        const b = await readBody(req)
+        const name = String(b.name || '')
+        // 只允许删 .video 目录里的 .mp4，且名字里不能有路径分隔符（防误删别处文件）
+        if (!name || /[/\\]|\.\./.test(name) || !name.endsWith('.mp4')) {
+          return sendJson(res, 200, { ok: false, error: '文件名不合法' })
+        }
+        const p = join(home, '.video', name)
+        if (!existsSync(p)) return sendJson(res, 200, { ok: false, error: '这个视频已经不在了' })
+        const size = statSync(p).size
+        rmSync(p, { force: true })
+        logLine(home, `删除视频 ${name}（${Math.round(size / 1048576 * 10) / 10}MB）`)
+        return sendJson(res, 200, { ok: true, freed: size })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 一键清空所有生成的视频（省空间用；素材不会动）
+    if (req.method === 'POST' && path === '/video/clear') {
+      try {
+        const d = join(home, '.video')
+        let n = 0, freed = 0
+        if (existsSync(d)) {
+          for (const f of readdirSync(d)) {
+            if (!f.endsWith('.mp4')) continue
+            try { freed += statSync(join(d, f)).size; rmSync(join(d, f), { force: true }); n++ } catch { /* 跳过 */ }
+          }
+        }
+        if (n) logLine(home, `清空视频 ${n} 个，腾出 ${Math.round(freed / 1048576)}MB`)
+        return sendJson(res, 200, { ok: true, deleted: n, freed })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 版式预览图：选哪种版式就现渲染一张 PNG 回给界面（不用真出视频）
     if (req.method === 'GET' && path === '/video/preview') {
       try {
