@@ -24,6 +24,7 @@ import { createReadStream } from 'node:fs'
 import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 import { homedir } from 'node:os'
 import {
   stateDirOf, ensureDir, loadConfig, saveConfig, loadState, saveState, parseSeen,
@@ -444,16 +445,63 @@ async function runAssistantTool(home, tool, args, ctx = {}) {
     case 'runRound': {
       const mode = String(args.mode || 'dry')
       if (mode === 'real' && ctx.confirm !== true) {
-        return { ok: false, needConfirm: true, error: '真要发评论的话，需要你点一下确认' }
+        return { ok: false, needConfirm: true, error: '真要发评论的话，需要你点一下确认（会在你确认后执行一次）' }
       }
-      return { ok: false, error: '跑轮需要在界面上点「立即跑」按钮（这里先不做，避免重复触发）' }
+      try {
+        const s = await runRound({
+          home,
+          force: mode === 'real',
+          dryRun: mode !== 'real',
+          shouldStop: () => false,
+          hostModels: extractHostModels(),
+          log: (m) => logLine(home, m),
+        })
+        await maybePushRound(home, s).catch(() => {})
+        return {
+          ok: true,
+          note: (mode === 'real' ? '真发' : '试跑') + '完成：挑中 ' + (s.picked || 0) + ' 条'
+            + (mode === 'real' ? ('，发出 ' + (s.posted || 0) + ' 条') : '')
+            + (s.why ? ('；' + String(s.why).slice(0, 40)) : ''),
+        }
+      } catch (e) { return { ok: false, error: '跑轮失败：' + String((e && e.message) || e).slice(0, 100) } }
     }
     case 'generateVideo': {
-      return { ok: false, error: '生成视频请在发布页点「生成视频」（避免和正在跑的任务冲突）' }
+      try {
+        const topic = String(args.topic || '')
+        const rr = startVideoJob({ home, cfg: c, chain: buildVideoChain(c, { buildEndpoints, hostModels: extractHostModels() }), topic })
+        if (!rr || rr.ok === false) return { ok: false, error: (rr && rr.error) || '已经在生成中了' }
+        return { ok: true, note: '开始生成视频' + (topic ? ('（主题：' + topic.slice(0, 20) + '）') : '') + '，去发布页看进度' }
+      } catch (e) { return { ok: false, error: '生成失败：' + String((e && e.message) || e).slice(0, 100) } }
     }
     default:
       return { ok: false, error: '不认识这个工具：' + tool }
   }
+}
+
+/**
+ * 清「我们自己造的」临时文件（2026-11-1）
+ * 只删中间产物：预览图、临时开场片段、AI 生成的卡片背景图、系统临时目录里我们的残留。
+ * **绝不碰**：用户成片（video-*.mp4）、素材、配置、日报。
+ */
+function cleanupTemp(home) {
+  let bytes = 0
+  let files = 0
+  const vd = join(home, '.video')
+  try {
+    if (existsSync(vd)) {
+      for (const f of readdirSync(vd)) {
+        if (!/^(preview-|opening-|gen-|final-)/.test(f)) continue
+        try { bytes += statSync(join(vd, f)).size; rmSync(join(vd, f), { force: true }); files++ } catch { /* skip */ }
+      }
+    }
+  } catch { /* 没权限 */ }
+  try {
+    for (const f of readdirSync(tmpdir())) {
+      if (!/^(dshvideo_|dshaudio_|dshimgtest-|bili-.*\.m4a$)/.test(f)) continue
+      try { bytes += statSync(join(tmpdir(), f)).size; rmSync(join(tmpdir(), f), { force: true }); files++ } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  return { bytes, files }
 }
 
 const SELF_ROOT = dirname(fileURLToPath(import.meta.url))
@@ -989,6 +1037,40 @@ export function apply(ctx, _config) {
           } catch (e) { results.push({ tool: a.tool, ok: false, error: String(e?.message || e).slice(0, 120) }) }
         }
         return sendJson(res, 200, { ok: true, say: say || '（没说话）', results })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 一键自动优化：释放内存 + 清渲染中间产物（不碰素材/配置/日报）
+    if (req.method === 'POST' && path === '/system/optimize') {
+      try {
+        const before = process.memoryUsage().rss
+        const r = freeMemory({ aggressive: true })
+        const cf = cleanupTemp(home)
+        const freedFiles = cf.bytes
+        const nFiles = cf.files
+        const after = process.memoryUsage().rss
+        const rssFreed = Math.max(0, before - after)
+        logLine(home, `优化：内存 -${Math.round(rssFreed / 1048576)}MB，清理 ${nFiles} 个临时文件`)
+        return sendJson(res, 200, {
+          ok: true,
+          rssFreed,
+          filesFreed: freedFiles,
+          files: nFiles,
+          before,
+          after,
+        })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 我发过的评论：带 B站 直达链接（点开就定位到那条评论）
+    if (req.method === 'GET' && path === '/posted') {
+      try {
+        const limit = Number(new URL(req.url, 'http://x').searchParams.get('limit') || 30)
+        const items = listPosts(home, limit).map((x) => ({
+          ...x,
+          // B站 的评论锚点：#reply{rpid} 会滚到那条评论
+          link: x.bvid && x.rpid ? ('https://www.bilibili.com/video/' + x.bvid + '#reply' + x.rpid) : '',
+          videoLink: x.bvid ? ('https://www.bilibili.com/video/' + x.bvid) : '',
+        }))
+        return sendJson(res, 200, { ok: true, items })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 运行小结（插件自己的时间线，不依赖 DSH 会话）    // 运行小结（插件自己的时间线，不依赖 DSH 会话）
@@ -1630,7 +1712,9 @@ export function apply(ctx, _config) {
             const r = freeMemory({ aggressive: true })
             const kb = Math.round((before - (r.after || before)) / 1024)
             if ((r.freed && (r.freed.flavorCache || r.freed.depCacheFailures)) || r.gc) {
-              logLine(home, `自动省内存：清了缓存${r.gc ? '并回收了垃圾' : ''}` + (kb > 0 ? `（约省 ${kb}KB）` : ''))
+              const cf = cleanupTemp(home)
+            logLine(home, `自动优化：清了缓存${r.gc ? '并回收了垃圾' : ''}` + (kb > 0 ? `（约省 ${kb}KB）` : '')
+              + (cf.files ? `，清掉 ${cf.files} 个临时文件（${Math.round(cf.bytes / 1048576 * 10) / 10}MB）` : ''))
             }
           } catch { /* 清缓存失败无所谓 */ }
         }, 10 * 60 * 1000)
