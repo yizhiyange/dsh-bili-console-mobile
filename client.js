@@ -766,6 +766,61 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 我发过的评论：带直达链接，点开就滚到那条评论 */
+      const loadPosted = async () => {
+        try {
+          const box = document.querySelector('[data-bd-posted]')
+          if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">读取中…</div>'
+          const r = await jget('/posted?limit=20')
+          if (!box) return
+          const items = (r && r.items) || []
+          if (!items.length) { box.innerHTML = '<div style="font-size:12px;color:var(--t3)">还没发过评论。</div>'; return }
+          box.innerHTML = ''
+          for (const it of items) {
+            const row = document.createElement('div')
+            row.style.cssText = 'padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:var(--surface)'
+            const t = document.createElement('div')
+            t.style.cssText = 'font-size:12px;color:var(--t1);line-height:1.6'
+            t.textContent = (it.text || '').slice(0, 60)
+            const meta = document.createElement('div')
+            meta.style.cssText = 'font-size:11px;color:var(--t3);margin-top:3px'
+            meta.textContent = (it.at || '') + ' · ' + (it.title || it.bvid || '')
+            const bar = document.createElement('div')
+            bar.style.cssText = 'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'
+            if (it.link) {
+              const b = document.createElement('button')
+              b.className = 'ghost sm'; b.textContent = '🔎 去看这条评论'
+              b.onclick = () => { jpost('/open', { what: 'url', u: it.link }).then((x) => { if (x && x.url) toast_('已打开：' + x.url) }) }
+              bar.appendChild(b)
+            }
+            row.appendChild(t); row.appendChild(meta); row.appendChild(bar)
+            box.appendChild(row)
+          }
+        } catch { /* 读不到就算了 */ }
+      }
+      /** 一键优化：放内存 + 清临时文件 */
+      const runOptimize = async () => {
+        try {
+          toast_('正在优化…')
+          const r = await jpost('/system/optimize', {})
+          if (!r || !r.ok) return toast_('优化失败：' + ((r && r.error) || ''))
+          const mb = Math.round((r.rssFreed || 0) / 1048576)
+          const fm = Math.round((r.filesFreed || 0) / 1048576 * 10) / 10
+          toast_('已优化：内存 -' + mb + 'MB，清理 ' + (r.files || 0) + ' 个临时文件（' + fm + 'MB）')
+        } catch (e) { toast_('优化失败：' + String(e?.message ?? e)) }
+      }
+      /** 长任务期间请求屏幕常亮（保活；不支持就安静跳过） */
+      let _wake = null
+      const keepScreenAwake = async (on) => {
+        try {
+          if (on && !_wake && navigator.wakeLock && navigator.wakeLock.request) {
+            _wake = await navigator.wakeLock.request('screen')
+          } else if (!on && _wake) {
+            try { await _wake.release() } catch { /* noop */ }
+            _wake = null
+          }
+        } catch { /* 不支持就算了 */ }
+      }
       /** AI 助手：说一句话，它输出动作、插件白名单执行（能真的改设置） */
       const renderChat = () => {
         const box = document.querySelector('[data-bd-chat]')
@@ -1587,6 +1642,8 @@ window.__ModuleLoader__.load({
       const lg = st?.login || {}
       const q = st?.quota || {}
       const running = Boolean(st?.run && st.run.running)
+      // 长任务（跑轮 / 生成视频）时请求屏幕常亮：安卓会杀后台，屏幕亮着能显著提高存活率
+      try { keepScreenAwake(running || Boolean(st?.video && st.video.running)) } catch { /* noop */ }
       const pillTone = guard.active ? 'warn' : (lg.loggedIn ? 'run' : 'ok')
 
       if (!st) {
@@ -1728,6 +1785,10 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' } },
               Input({ 'data-bd-chatinput': '', placeholder: '跟它说你想改什么…', onEnter: () => sendChat() }),
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: sendChat }, '发送'))),
+          Card({ title: '我发过的评论', sub: '每条都能点开直达 B站 那条评论（滚过去就能看到）' },
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadPosted }, '刷新')),
+            h('div', { 'data-bd-posted': '' }, h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '点「刷新」看最近发过的评论'))),
           Card({ title: '运行小结', sub: '插件自己记的时间线（不依赖 DSH 会话，跑几轮都不会丢）' },
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadRuns }, '刷新'),
@@ -2449,6 +2510,7 @@ window.__ModuleLoader__.load({
           try { const r = await jpost('/assets/reveal', {}); if (r && r.dir) toast_('已打开：' + r.dir) } catch { toast_('打不开素材文件夹') }
         }
         setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
+        setTimeout(() => { try { if (document.querySelector('[data-bd-posted]')) loadPosted() } catch { /* noop */ } }, 260)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
@@ -2599,7 +2661,8 @@ window.__ModuleLoader__.load({
             Card({ title: '内存（运行内存，不是存储空间）', sub: '注意：这里显示的是宿主进程总量（DSH 本体 + 本插件），不是插件单独占的' },
               h('div', { 'data-bd-meminfo': '', style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.9 } }, '读取中…'),
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
-                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: doFreeMemory }, '🧹 释放一下'),
+                h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: runOptimize }, '⚡ 一键优化（内存+临时文件）'),
+                h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: doFreeMemory }, '🧹 只释放内存'),
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadMemInfo }, '刷新'))),
           Card({ title: '素材库', sub: '图片当背景 / 音频当 BGM。备注可以不写（不写就不会被 AI 选用）；写一句「什么时候用」它才会主动挑' },
             ToggleRow({
