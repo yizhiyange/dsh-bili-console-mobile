@@ -37,6 +37,8 @@ import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
+import { addPublished, listPublished, markRetracted } from './lib/publishlog.mjs'
+import { deleteDynamic, deleteArchive, readCred } from './lib/biliweb.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
@@ -820,6 +822,10 @@ export function apply(ctx, _config) {
             scheduleTime: Number(b.scheduleTime) || 0,
           })
           logLine(home, r && r.success ? `已手动发动态：${text.slice(0, 30)}` : `发动态失败：${(r && r.error) || '未知'}`)
+          if (r && r.success) {
+            const did = r.dynamic_id || (r.data && (r.data.dynamic_id || r.data.dyn_id)) || r.id || ''
+            addPublished(home, { kind: 'dynamic', id: String(did || ''), text })
+          }
           return sendJson(res, 200, { ok: Boolean(r && r.success), ...(r || {}) })
         }
         finally { try { cli.close() } catch { /* noop */ } }
@@ -1059,6 +1065,51 @@ export function apply(ctx, _config) {
           before,
           after,
         })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 我发过的动态 / 投稿（要撤回先得有账本）
+    if (req.method === 'GET' && path === '/published') {
+      try {
+        return sendJson(res, 200, { ok: true, items: listPublished(home, 30), canRetract: Boolean(readCred(home) && readCred(home).biliJct) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 撤回一条动态或投稿（走 B站 网页接口，属于"实验性"：接口改版就会失败，失败原因原样返回）
+    if (req.method === 'POST' && path === '/published/retract') {
+      try {
+        const b = await readBody(req)
+        const kind = String(b.kind || '')
+        const id = String(b.id || '')
+        if (!id) return sendJson(res, 200, { ok: false, error: '缺 id' })
+        let r
+        if (kind === 'dynamic') r = await deleteDynamic(home, id)
+        else if (kind === 'video') r = await deleteArchive(home, { aid: b.aid || id, bvid: b.bvid || '' })
+        else return sendJson(res, 200, { ok: false, error: '未知类型：' + kind })
+        if (r.ok) {
+          markRetracted(home, kind, id)
+          logLine(home, `撤回${kind === 'dynamic' ? '动态' : '投稿'}：${id}`)
+        } else {
+          logLine(home, `撤回失败（${kind} ${id}）：${r.message || r.code || ''}`)
+        }
+        return sendJson(res, 200, { ok: !!r.ok, message: r.message || '', code: r.code ?? null, http: r.http ?? null })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    // 撤回单条评论（按 bvid + rpid 精确删，不用"撤回上一条"）
+    if (req.method === 'POST' && path === '/posted/retract') {
+      try {
+        const b = await readBody(req)
+        const bvid = String(b.bvid || '')
+        const rpid = Number(b.rpid || 0)
+        if (!bvid || !rpid) return sendJson(res, 200, { ok: false, error: '缺 bvid 或 rpid' })
+        const { login } = __publishPre()
+        if (!login.loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B 站' })
+        syncCredToVendor(home)
+        const cli = newClient(loadConfig(home), home)
+        try {
+          const r = await deleteComment(cli, bvid, rpid)
+          const ok = r && (r.code === 0 || r.success === true || String(r.message || '').includes('成功') || r.raw === undefined)
+          if (ok) { dropPost(home, rpid); logLine(home, `撤回评论 ${rpid}（${bvid}）`) }
+          return sendJson(res, 200, { ok: !!ok, ...(r || {}) })
+        } finally { try { cli.close() } catch { /* noop */ } }
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 我发过的评论：带 B站 直达链接（点开就定位到那条评论）
@@ -1360,6 +1411,10 @@ export function apply(ctx, _config) {
             noReprint: b.noReprint !== false,
           })
           logLine(home, r && r.success ? `已投稿视频：${String(b.title).slice(0, 30)}` : `投稿失败：${(r && r.error) || '未知'}`)
+          if (r && r.success) {
+            // 记下来才能撤回（B站 的稿件 id 在返回里叫 aid/bvid，两种都存）
+            addPublished(home, { kind: 'video', bvid: r.bvid || r.bv_id || '', aid: r.aid || (r.data && r.data.aid) || '', text: String(b.title || '') })
+          }
           return sendJson(res, 200, { ok: Boolean(r && r.success), ...(r || {}) })
         }
         finally { try { cli.close() } catch { /* noop */ } }
