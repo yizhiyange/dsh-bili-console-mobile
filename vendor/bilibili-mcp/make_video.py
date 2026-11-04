@@ -315,7 +315,7 @@ def render_card(card, idx, total, W, H, font_path, layout=None):
     return base, layer
 
 
-def _tts_http(text, out_file, url, voice):
+def _tts_http(text, out_file, url, voice, model=''):
     """调用外部 TTS 服务（2026-11-1 加）
     为什么要它：微软的声线再好也就那几个，想用「大肥鱼」这种社区训练的声线，
     得跑 GPT-SoVITS / ChatTTS / vits-simple-api 这类本地服务。**插件不打包模型**
@@ -323,7 +323,10 @@ def _tts_http(text, out_file, url, voice):
     约定：POST JSON {text, voice?} → 返回音频二进制（mp3/wav 都行，ffmpeg 能读）"""
     try:
         import urllib.request
-        body = json.dumps({'text': text, 'voice': voice or ''}).encode('utf-8')
+        payload = {'text': text, 'voice': voice or ''}
+        if model:
+            payload['model'] = model        # 有些服务（GPT-SoVITS 等）必须指定模型/角色
+        body = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=120) as r:
             data = r.read()
@@ -337,12 +340,12 @@ def _tts_http(text, out_file, url, voice):
         return False
 
 
-def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%', engine='edge', url=''):
+def tts_to_mp3(text, out_mp3, voice, rate='+0%', pitch='+0Hz', volume='+0%', engine='edge', url='', model=''):
     """配音合成。
     engine=edge（默认）：微软 edge-tts，免费、内置、零下载
     engine=http        ：把文字发给自建/第三方 TTS 服务（开源声线走这条），插件本身不打包模型"""
     if engine == 'http' and url:
-        return _tts_http(text, out_mp3, url, voice)
+        return _tts_http(text, out_mp3, url, voice, model)
     try:
         import edge_tts
     except Exception:
@@ -452,6 +455,7 @@ def main():
                 voice.get('volume') or '+0%',
                 voice.get('engine') or 'edge',
                 voice.get('url') or '',
+                voice.get('model') or '',
             )
             if not good:
                 ok_all = False
