@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os'
 import { homedir } from 'node:os'
 import {
   stateDirOf, ensureDir, loadConfig, saveConfig, loadState, saveState, parseSeen,
-  readReport, dayKey, inWindow, WINDOWS,
+  readReport, dayKey, inWindow, WINDOWS, scheduleState,
 } from './lib/state.mjs'
 import { resolvePersona } from './lib/persona.mjs'
 import { Cooldown, decide } from './lib/guardian.mjs'
@@ -42,7 +42,7 @@ import { deleteDynamic, deleteArchive, readCred } from './lib/biliweb.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
-import { PRESETS, computeAutoConfig, describeAuto, estimateDay } from './lib/automode.mjs'
+import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode } from './lib/automode.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -130,6 +130,11 @@ export const Config = !z ? undefined : z.object({
   dmWatch: z.boolean().default(true).extra('volatile', true),
   dmWatchMinutes: z.natural().default(1).extra('volatile', true),
   dmReplyPerDay: z.natural().default(0).extra('volatile', true),
+  roundIntervalMinutes: z.natural().default(5).extra('volatile', true),
+  scanPerRound: z.natural().default(0).extra('volatile', true),
+  scheduleMode: z.string().default('any').extra('volatile', true),
+  activeStart: z.string().default('09:00').extra('volatile', true),
+  activeEnd: z.string().default('23:00').extra('volatile', true),
   peakValley: z.boolean().default(false).extra('volatile', true),
   noon: z.boolean().default(true).extra('volatile', true),
   night: z.boolean().default(true).extra('volatile', true),
@@ -374,6 +379,7 @@ const ASSIST_KEYS = new Set([
   'perDay', 'commentPerRound', 'autoComment', 'dmMode', 'replyToComments', 'useHomeFeed', 'useKeywordSearch',
   'keywords', 'videoVoice', 'videoVoiceName', 'videoVoiceRate', 'videoVoicePitch', 'videoLayout',
   'videoCogVideo', 'videoCogVideoMode', 'videoImageEnabled', 'thinkLevel', 'mentionName', 'mentionMode',
+  'roundIntervalMinutes', 'scanPerRound', 'scheduleMode', 'activeStart', 'activeEnd',
   'lowPower', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
 ])
 
@@ -389,6 +395,9 @@ async function runAssistantTool(home, tool, args, ctx = {}) {
           私信: c.dmMode || 'off', 今日已用: Math.max(Number(st.picked) || 0, Number(st.count) || 0),
           画面版式: c.videoLayout || 'auto', 开场动态: !!c.videoCogVideo,
           思考强度: c.thinkLevel || 'off', 素材参与: !!c.useAssets,
+          每轮间隔分钟: c.roundIntervalMinutes || 5, 每轮看几条视频: c.scanPerRound || 0,
+          运行时段: (c.scheduleMode === 'window' ? ('每天 ' + (c.activeStart || '09:00') + '-' + (c.activeEnd || '23:00'))
+            : (c.scheduleMode === 'valley' ? '只在官方谷时' : '全天 7×24')),
         },
       }
     }
@@ -1023,7 +1032,7 @@ export function apply(ctx, _config) {
           '每日上限 ' + (c.perDay || 0) + ' 条，已用 ' + q + ' 条',
           '自动评论：' + (c.autoComment ? '开' : '关') + '；私信：' + (c.dmMode || 'off'),
           '画面版式：' + (c.videoLayout || 'auto') + '；开场：' + (c.videoCogVideo ? (c.videoCogVideoMode || 'local') : '关'),
-          '思考强度全局：' + (c.thinkLevel || 'off'),
+          '思考强度全局：' + (c.thinkLevel || 'off') + '；运行时段：' + (c.scheduleMode === 'window' ? (c.activeStart + '-' + c.activeEnd) : (c.scheduleMode === 'valley' ? '官方谷时' : '7×24')) + '；每轮间隔 ' + (c.roundIntervalMinutes || 5) + ' 分钟；每轮看 ' + (c.scanPerRound || '默认') + ' 条',
         ].join('；')
         const r = await chat(chain, {
           system: buildSystemPrompt(brief),
@@ -1073,20 +1082,34 @@ export function apply(ctx, _config) {
       try {
         const b = await readBody(req)
         const preset = String(b.preset || 'safe')
-        const allDay = b.allDay === true
-        const values = computeAutoConfig(preset, b.overrides || {}, { allDay })
-        const c = loadConfig(home)
-        saveConfig(home, { ...c, ...values })
-        const est = estimateDay(values, allDay)
-        logLine(home, `应用自动模式（${(PRESETS[preset] || PRESETS.safe).label}）：` + describeAuto(values, allDay))
-        return sendJson(res, 200, { ok: true, values, estimate: est, summary: describeAuto(values, allDay) })
+        const r = applyAutoMode(home, preset, b.overrides || {}, {
+          allDay: b.allDay === true,
+          applyInteractions: b.applyInteractions === true,
+        })
+        logLine(home, `应用自动模式（${(PRESETS[preset] || PRESETS.safe).label}）：` + r.summary)
+        return sendJson(res, 200, r)
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     if (req.method === 'POST' && path === '/automode/plan') {
       try {
         const b = await readBody(req)
-        const values = computeAutoConfig(String(b.preset || 'safe'), b.overrides || {}, { allDay: b.allDay === true })
-        return sendJson(res, 200, { ok: true, values, estimate: estimateDay(values, b.allDay === true), summary: describeAuto(values, b.allDay === true) })
+        const preset = String(b.preset || 'safe')
+        const c = loadConfig(home)
+        const values = computeAutoConfig(preset, b.overrides || {}, { allDay: b.allDay === true })
+        return sendJson(res, 200, {
+          ok: true,
+          values,
+          estimate: estimateDay(values),
+          summary: describeAuto(values),
+          schedule: scheduleLabel(values),
+          hours: activeHours(values),
+          // 安全防护页现在的开关值 + 这个档位的建议值（界面用来提示"会不会覆盖"）
+          interactions: interactionDiff(preset, c),
+          currentInteractions: {
+            autoComment: !!c.autoComment, autoLike: !!c.autoLike, autoCoin: !!c.autoCoin,
+            replyToComments: !!c.replyToComments, dmMode: c.dmMode || 'off',
+          },
+        })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
     // 我发过的动态 / 投稿（要撤回先得有账本）
@@ -1821,7 +1844,7 @@ export function apply(ctx, _config) {
       return startDmWatcher(ctx, home, () => extractHostModels(), Math.round(mins * 60000))
     }, 'bili-console: 私信监察器')
   } catch (e) { log(`私信监察器没起：${e?.message ?? e}`) }
-  //   ② 定时值守：每 5 分钟看一眼，在谷时窗口内且未达上限才真跑（非 force）
+  //   ② 定时值守：每 60 秒看一眼（判定用统一的时段/间隔，别自己再写一套）
   try {
     ctx.effect(() => {
       const scheduler = setInterval(async () => {
@@ -1831,7 +1854,16 @@ export function apply(ctx, _config) {
           const safeMode = !c.autoComment && c.dmMode === 'off'
           if (safeMode) return
           if (!loginStatus(home).loggedIn) return
-          if (!inWindow({ noon: c.noon, night: c.night }, new Date()) && c.peakValley) return
+          // 运行时段（7×24 / 自定义 / 谷时）
+          const sch = scheduleState(c, new Date())
+          if (!sch.ok) return
+          // 每轮间隔：默认 5 分钟（和以前一样），可调到 1~240 分钟
+          const gapMin = Math.max(1, Number(c.roundIntervalMinutes) || 5)
+          const stt = loadState(home)
+          if (stt.lastRunMs && Date.now() - Number(stt.lastRunMs) < gapMin * 60000) return
+          // 同一自然日已经到上限就别再跑（round 里也会拦，这里先省掉一次启动）
+          const usedToday = Math.max(Number(stt.count) || 0, Number(stt.picked) || 0)
+          if (stt.day === dayKey() && usedToday >= Number(c.perDay || 0)) return
           if (roundRunning) return
           // 人类式抖动：不在整点整分同时开工，随机等 0~3 分钟（多账号/长期挂更像人）
           const jitterMs = Math.floor(Math.random() * 180 * 1000)
@@ -1844,7 +1876,7 @@ export function apply(ctx, _config) {
           catch (e) { logLine(home, `定时轮次异常：${e?.message || e}`) }
           finally { roundRunning = false }
         } catch (e) { log(`值守调度异常：${e?.message || e}`) }
-      }, 5 * 60 * 1000)
+      }, 60 * 1000)
       if (scheduler.unref) scheduler.unref()
       return () => clearInterval(scheduler)
     }, 'bili-console: 值守调度')
