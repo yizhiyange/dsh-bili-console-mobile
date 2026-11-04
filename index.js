@@ -21,7 +21,7 @@
  * ============================================================================
  */
 import { createReadStream } from 'node:fs'
-import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, openSync, readSync, closeSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -32,7 +32,7 @@ import {
 } from './lib/state.mjs'
 import { resolvePersona } from './lib/persona.mjs'
 import { Cooldown, decide } from './lib/guardian.mjs'
-import { parseLine, levelOf, translate, tailLines } from './lib/logread.mjs'
+import { parseLine, levelOf, translate, tailLines, readTailText, trimDutyLog } from './lib/logread.mjs'
 import { buildEndpoints } from './lib/chain.mjs'
 import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
@@ -744,8 +744,10 @@ export function apply(ctx, _config) {
         // 省内存（2026-11-1）：原来每次轮询都固定回 240 行，手机上这份 JSON 又大又占内存，
         // 省电模式只回 60 行（画面上够看最近十几条了），读文件也只读最后一段，不再整个读进来。
         const c = loadConfig(home)
-        const maxLn = c.lowPower ? 60 : 240
-        const text = readFileSync(join(home, 'duty.log'), 'utf8')
+        // 手机：一次只回 60 行、只读文件末尾 200KB（电脑维持原样：240 行、整份读）
+        const isPhone = process.platform === 'linux'
+        const maxLn = (isPhone || c.lowPower) ? 60 : 240
+        const text = isPhone ? readTailText(join(home, 'duty.log'), 200000) : readFileSync(join(home, 'duty.log'), 'utf8')
         lines = tailLines(text, maxLn, 500000).map((ln) => {
           const { t, msg } = parseLine(ln)
           return { t: t || '——', msg, lv: levelOf(msg) }
@@ -1836,7 +1838,28 @@ export function apply(ctx, _config) {
           } catch { /* 清缓存失败无所谓 */ }
         }, 10 * 60 * 1000)
         try { t.unref?.() } catch {}
-        return () => { try { clearInterval(t) } catch {} }
+
+        // 60 秒看一眼（2026-11-4 加，手机专用）：
+        //   · 系统可用内存掉到 12% 以下才动手释放 —— 比"固定每 10 分钟清一次"更贴合真实压力，
+        //     平时只读 /proc/meminfo 两个数字，几乎零 CPU 开销
+        //   · 顺手把超过 2MB 的 duty.log 裁到最后 4000 行（日志越大，每次轮询读它越费 IO）
+        // ⚠️ 下面这两件事**只在手机（linux）上做**：电脑即使用户开了省电模式，也不改它的行为
+        const isPhone = process.platform === 'linux'
+        if (isPhone) try { trimDutyLog(home) } catch {}
+        const t2 = isPhone ? setInterval(() => {
+          try {
+            const m = systemMem()
+            if (m && m.total > 0 && m.available > 0 && m.available < m.total * 0.12) {
+              const r = freeMemory({ aggressive: true })
+              const cf = cleanupTemp(home)
+              logLine(home, '手机可用内存只剩 ' + Math.round(m.available / 1048576) + 'MB，已自动释放'
+                + (cf.files ? ('并清掉 ' + cf.files + ' 个临时文件') : ''))
+            }
+            trimDutyLog(home)
+          } catch { /* 压力检查失败无所谓 */ }
+        }, 60 * 1000) : null
+        try { t2?.unref?.() } catch {}
+        return () => { try { clearInterval(t) } catch {}; if (t2) { try { clearInterval(t2) } catch {} } }
       }, 'bili-console: 手机省内存')
     }
   } catch (e) { log(`省内存定时器没起：${e?.message ?? e}`) }
