@@ -42,7 +42,7 @@ import { deleteDynamic, deleteArchive, readCred } from './lib/biliweb.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
-import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode, warningsFor } from './lib/automode.mjs'
+import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode, warningsFor, adjustmentsFor } from './lib/automode.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -1087,6 +1087,7 @@ export function apply(ctx, _config) {
           applyInteractions: b.applyInteractions === true,
         })
         r.warnings = warningsFor(r.values)
+        r.adjustments = adjustmentsFor(b.overrides || {}, r.values)
         logLine(home, `应用自动模式（${(PRESETS[preset] || PRESETS.safe).label}）：` + r.summary)
         return sendJson(res, 200, r)
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
@@ -1106,6 +1107,7 @@ export function apply(ctx, _config) {
           hours: activeHours(values),
           // 安全防护页现在的开关值 + 这个档位的建议值（界面用来提示"会不会覆盖"）
           warnings: warningsFor(values),
+          adjustments: adjustmentsFor(b.overrides || {}, values),
           interactions: interactionDiff(preset, c),
           currentInteractions: {
             autoComment: !!c.autoComment, autoLike: !!c.autoLike, autoCoin: !!c.autoCoin,
