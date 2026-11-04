@@ -602,7 +602,21 @@ window.__ModuleLoader__.load({
     // 折叠面板的展开状态存在组件外面：页面每 2 秒重渲染、甚至切页回来，都不会把用户展开的东西关掉
     const BILI_UI_OPEN = { tts: false }
     // 自动模式的编辑草稿：用户在卡片里选档位/填数字时，2 秒轮询别把它冲掉
-    const BILI_AUTO = { preset: 'safe', allDay: false, perDay: 6, commentPerRound: 3, cooldownMinutes: 8 }
+    // 自动模式的草稿（放组件外面：2 秒轮询重渲染不会把用户填的东西冲掉）
+    const BILI_AUTO = {
+      preset: 'safe',
+      perDay: 6,
+      commentPerRound: 3,
+      roundIntervalMinutes: 30,
+      scanPerRound: 30,
+      scheduleMode: 'window',
+      activeStart: '09:00',
+      activeEnd: '23:00',
+      noon: true,
+      night: false,
+      applyInteractions: false,   // 默认不碰「安全防护」页的互动开关
+      synced: false,              // 是否已经把已保存配置灌进草稿（只灌一次）
+    }
 
     /* ────────────── 主组件 ────────────── */
     function Console() {
@@ -770,28 +784,109 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
-      /** 自动模式：预演 + 应用 */
-      const autoOverrides = () => ({
-        perDay: Number(BILI_AUTO.perDay) || 6,
-        commentPerRound: Number(BILI_AUTO.commentPerRound) || 3,
-        cooldownMinutes: Number(BILI_AUTO.cooldownMinutes) || 8,
-      })
+      /** 自动模式的草稿 → 请求体（只含频次/时段；互动开关单独一个勾选） */
+      const autoOverrides = () => {
+        const o = {
+          perDay: Number(BILI_AUTO.perDay) || 8,
+          commentPerRound: Number(BILI_AUTO.commentPerRound) || 4,
+          roundIntervalMinutes: Number(BILI_AUTO.roundIntervalMinutes) || 20,
+          scanPerRound: BILI_AUTO.scanPerRound === '' ? 0 : Number(BILI_AUTO.scanPerRound) || 0,
+          scheduleMode: BILI_AUTO.scheduleMode || 'any',
+          activeStart: BILI_AUTO.activeStart || '09:00',
+          activeEnd: BILI_AUTO.activeEnd || '23:00',
+        }
+        if (o.scheduleMode === 'valley') { o.noon = !!BILI_AUTO.noon; o.night = !!BILI_AUTO.night }
+        return o
+      }
+      /** 首次进页面：把「已保存的配置」灌进草稿，别让卡片显示成默认档位骗人 */
+      const syncAutoFromCfg = () => {
+        if (BILI_AUTO.synced) return
+        const c = (state && state.settings) || null
+        if (!c || c.perDay == null) return      // 设置还没回来，等下一次
+        BILI_AUTO.synced = true
+        // 已存配置不一定正好等于某个档位，标成「自定义」最诚实
+        BILI_AUTO.preset = 'custom'
+        BILI_AUTO.perDay = Number(c.perDay) || 8
+        BILI_AUTO.commentPerRound = Number(c.commentPerRound) || 4
+        BILI_AUTO.roundIntervalMinutes = Number(c.roundIntervalMinutes) || 5
+        BILI_AUTO.scanPerRound = Number(c.scanPerRound) || 0
+        BILI_AUTO.scheduleMode = c.scheduleMode || (c.peakValley ? 'valley' : 'any')
+        BILI_AUTO.activeStart = c.activeStart || '09:00'
+        BILI_AUTO.activeEnd = c.activeEnd || '23:00'
+        BILI_AUTO.noon = c.noon !== false
+        BILI_AUTO.night = c.night !== false
+      }
+      /** 把一次 /automode/plan 的结果画到卡片上：估算 + 「安全防护」冲突提示 */
+      const paintPlan = (r) => {
+        if (!r || !r.ok) return
+        const e = r.estimate || {}
+        const box = document.querySelector('[data-bd-autoplan]')
+        if (box) {
+          box.innerHTML = '一天约 <b>' + (e.rounds || 0) + ' 轮</b>、共 <b>' + (e.comments || 0) + ' 条</b>；'
+            + '每轮最多看 ' + (e.scanPerRound ? (e.scanPerRound + ' 条视频') : '默认量') + '（一天约 ' + (e.videosPerDay || 0) + ' 条）；'
+            + '间隔 ≥ ' + (e.effGapMinutes || 0) + ' 分钟；时段覆盖 ' + (e.windowHours || 0) + ' 小时'
+        }
+        const cf = document.querySelector('[data-bd-autoconf]')
+        if (!cf) return
+        const list = r.interactions || []
+        if (!list.length) { cf.innerHTML = ''; return }
+        const zh = { off: '关', only: '只发私信', both: '评论+私信' }
+        const fmt = (k, v) => (k === 'dmMode' ? (zh[v] || v || '关') : (v ? '开' : '关'))
+        const nowTxt = list.map((x) => x.label + '=' + fmt(x.key, x.current)).join('、')
+        const sugTxt = list.map((x) => x.label + '=' + fmt(x.key, x.next)).join('、')
+        if (BILI_AUTO.applyInteractions) {
+          const df = list.filter((x) => !x.same).map((x) => x.label + ' ' + fmt(x.key, x.current) + '→' + fmt(x.key, x.next))
+          cf.innerHTML = '⚠️ <b>会覆盖「安全防护」页</b>：' + (df.length ? df.join('；') : '无需改动（已经和这个档位一致）')
+          cf.style.color = 'var(--red, #e35d6a)'
+        } else {
+          cf.innerHTML = '🛡 这几个开关归「安全防护」页管，自动模式<b>不会动</b>：' + nowTxt
+            + (sugTxt ? '<br>这个档位的建议值：' + sugTxt + '（想一次设好，勾下面的框）' : '')
+          cf.style.color = 'var(--t3)'
+        }
+      }
       const planAuto = async () => {
         try {
-          const r = await jpost('/automode/plan', { preset: BILI_AUTO.preset, allDay: BILI_AUTO.allDay, overrides: autoOverrides() })
-          const box = document.querySelector('[data-bd-autoplan]')
-          if (!box || !r || !r.ok) return
-          const e = r.estimate || {}
-          box.textContent = '预计：一天约 ' + (e.rounds || 0) + ' 轮，每轮 ' + (e.perRound || 0) + ' 条，合计约 '
-            + (e.comments || 0) + ' 条评论（间隔 ≥ ' + (e.effGapMinutes || 0) + ' 分钟，覆盖 ' + (e.windowHours || 0) + ' 小时）'
-        } catch { /* 忽略 */ }
+          const r = await jpost('/automode/plan', { preset: BILI_AUTO.preset, overrides: autoOverrides(), applyInteractions: BILI_AUTO.applyInteractions === true })
+          paintPlan(r)
+        } catch { /* 估算失败不影响用 */ }
       }
+      /** 点档位：把预设值灌进草稿（这样输入框能立刻看见档位到底设了什么） */
+      const pickPreset = async (k) => {
+        BILI_AUTO.preset = k
+        try {
+          const r = await jpost('/automode/plan', { preset: k, overrides: {}, applyInteractions: BILI_AUTO.applyInteractions === true })
+          if (r && r.ok && r.values) {
+            const v = r.values
+            BILI_AUTO.perDay = v.perDay
+            BILI_AUTO.commentPerRound = v.commentPerRound
+            BILI_AUTO.roundIntervalMinutes = v.roundIntervalMinutes
+            BILI_AUTO.scanPerRound = v.scanPerRound
+            BILI_AUTO.scheduleMode = v.scheduleMode
+            BILI_AUTO.activeStart = v.activeStart
+            BILI_AUTO.activeEnd = v.activeEnd
+            if (v.scheduleMode === 'valley') { BILI_AUTO.noon = v.noon !== false; BILI_AUTO.night = v.night !== false }
+          }
+          paintPlan(r)
+        } catch { /* 忽略 */ }
+        setState((x) => (x ? { ...x } : x))
+      }
+      /** 草稿里一个小数字输入（改完立刻重算估算） */
+      const autoNum = (key, label, min, max, width) => h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+        h('span', { style: { fontSize: '12px' } }, label),
+        h('input', {
+          type: 'number', value: BILI_AUTO[key], min, max,
+          style: { width: width || '72px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' },
+          onChange: (e) => { BILI_AUTO[key] = e.target.value === '' ? '' : Number(e.target.value); planAuto() },
+        }))
       const applyAuto = async () => {
         try {
-          if (!window.confirm('应用自动模式？会覆盖：每日上限 / 每轮条数 / 间隔 / 点赞投币 / 私信 / 时段。\n其余设置（模型、人格卡、素材、配音）保持不变。')) return
-          const r = await jpost('/automode/apply', { preset: BILI_AUTO.preset, allDay: BILI_AUTO.allDay, overrides: autoOverrides() })
+          const inter = BILI_AUTO.applyInteractions === true
+          if (!window.confirm('应用自动模式？\n\n会改：每天上限 / 每轮条数 / 每轮间隔 / 每轮看多少条 / 运行时段 / 定时值守。'
+            + (inter ? '\n\n⚠️ 还会覆盖「安全防护」页的：自动评论 / 点赞 / 投币 / 回评论 / 私信。' : '\n\n「安全防护」页的互动开关不会动。'))) return
+          const r = await jpost('/automode/apply', { preset: BILI_AUTO.preset, overrides: autoOverrides(), applyInteractions: inter })
           if (!r || !r.ok) return toast_('应用失败：' + ((r && r.error) || ''))
-          toast_('已应用：' + (r.summary || ''))
+          const notes = (r.notes || []).join('；')
+          toast_('已应用：' + (r.summary || '') + (notes ? ('｜' + notes) : ''))
           planAuto()
         } catch (e) { toast_('应用失败：' + String(e?.message ?? e)) }
       }
@@ -1882,31 +1977,68 @@ window.__ModuleLoader__.load({
                   'data-bd-btn': '', className: 'outline sm', onClick: resetQuota,
                   title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
                 }, '重置今日额度')))),
-          Card({ title: '自动模式（挂机）', sub: '一键配好「像机器人一样自己跑」的参数；套完还能逐项改' },
+          Card({ title: '自动模式（挂机）', sub: '档位只是起点：每天几条、隔多久、每轮看多少条视频、跑哪个时段，下面全都能自己改' },
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-              ...['safe', 'balanced', 'aggressive'].map((k) => h('button', {
+              ...[['safe', '稳妥'], ['balanced', '平衡'], ['aggressive', '激进'], ['custom', '自定义']].map(([k, label]) => h('button', {
                 key: k, 'data-bd-btn': '',
                 className: 'sm ' + (BILI_AUTO.preset === k ? 'primary' : 'ghost'),
-                onClick: () => { BILI_AUTO.preset = k; planAuto(); setState((x) => (x ? { ...x } : x)) },
-              }, k === 'safe' ? '稳妥' : (k === 'balanced' ? '平衡' : '激进'))),
-              h('label', { style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '12px' } },
-                h('input', {
-                  type: 'checkbox', checked: BILI_AUTO.allDay,
-                  onChange: (e) => { BILI_AUTO.allDay = e.target.checked; planAuto() },
-                }), '24 小时都跑（关掉=只在白天时段）')),
-            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px', alignItems: 'center' } },
-              h('span', { style: { fontSize: '12px' } }, '每天上限'),
-              h('input', { type: 'number', value: BILI_AUTO.perDay, min: 1, max: 50, style: { width: '70px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.perDay = Number(e.target.value) || 6; planAuto() } }),
-              h('span', { style: { fontSize: '12px' } }, '每轮'),
-              h('input', { type: 'number', value: BILI_AUTO.commentPerRound, min: 1, max: 15, style: { width: '70px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.commentPerRound = Number(e.target.value) || 3; planAuto() } }),
-              h('span', { style: { fontSize: '12px' } }, '间隔(分)'),
-              h('input', { type: 'number', value: BILI_AUTO.cooldownMinutes, min: 1, max: 240, style: { width: '78px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.cooldownMinutes = Number(e.target.value) || 8; planAuto() } })),
-            h('div', { 'data-bd-autoplan': '', style: { fontSize: '11.5px', color: 'var(--t3)', marginTop: '8px', lineHeight: 1.7 } }, '点档位或改数字，这里会算出一天大概发多少条'),
+                onClick: () => pickPreset(k),
+              }, label))),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '运行时段'),
+                h('div', { 'data-bd-ds': '' }, '全天 7×24 = 不停；自定义时段 = 每天只在起止之间跑（跨夜也行，比如 22:00→06:00）；官方谷时 = 只跑午间和夜间两段')),
+              Select({
+                value: BILI_AUTO.scheduleMode || 'any',
+                onChange: (v) => { BILI_AUTO.scheduleMode = v; planAuto(); setState((x) => (x ? { ...x } : x)) },
+                minWidth: 150,
+              },
+                h('option', { value: 'any' }, '全天 7×24'),
+                h('option', { value: 'window' }, '自定义时段'),
+                h('option', { value: 'valley' }, '只在官方谷时'))),
+            (BILI_AUTO.scheduleMode === 'window') && h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' } },
+              h('span', { style: { fontSize: '12px' } }, '从'),
+              h('input', {
+                type: 'time', value: BILI_AUTO.activeStart || '09:00',
+                style: { height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' },
+                onChange: (e) => { BILI_AUTO.activeStart = e.target.value; planAuto() },
+              }),
+              h('span', { style: { fontSize: '12px' } }, '到'),
+              h('input', {
+                type: 'time', value: BILI_AUTO.activeEnd || '23:00',
+                style: { height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' },
+                onChange: (e) => { BILI_AUTO.activeEnd = e.target.value; planAuto() },
+              }),
+              h('span', { style: { fontSize: '11px', color: 'var(--t3)' } }, '到点自动停、到点自动开')),
+            (BILI_AUTO.scheduleMode === 'valley') && h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' } },
+              h('span', { style: { fontSize: '12px' } }, '谷时窗口：'),
+              ...[['noon', '午间 12:00–14:00'], ['night', '夜间 18:00–09:00']].map(([k, label]) => h('span', {
+                key: k, 'data-bd-chip': '', style: { cursor: 'pointer', background: BILI_AUTO[k] ? 'var(--blue)' : 'var(--blue-bg)', color: BILI_AUTO[k] ? '#fff' : 'var(--blue)' },
+                onClick: () => { BILI_AUTO[k] = !BILI_AUTO[k]; planAuto(); setState((x) => (x ? { ...x } : x)) },
+              }, label))),
+            h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px', alignItems: 'center' } },
+              autoNum('perDay', '每天上限', 1, 50, '68px'),
+              autoNum('commentPerRound', '每轮发', 1, 15, '62px'),
+              autoNum('roundIntervalMinutes', '间隔(分)', 1, 240, '70px'),
+              autoNum('scanPerRound', '每轮看(条视频)', 0, 200, '78px')),
+            h('div', { style: { fontSize: '11px', color: 'var(--t3)', marginTop: '4px', lineHeight: 1.7 } },
+              '「每轮看」= 一轮最多翻多少条候选视频，0 = 按默认量（首页 30 条 + 每个关键词 20 条）。翻得越多越不容易重复，但更慢更费 token。'),
+            // 这两块内容由 paintPlan() 直接写 DOM（空节点，React 不托管子元素，轮询重渲染也不会被冲掉）
+            h('div', { style: { fontSize: '11.5px', color: 'var(--t3)', marginTop: '8px', lineHeight: 1.8 } },
+              h('div', { 'data-bd-autoplan': '' }, '点档位或改数字，这里会算出一天大概跑多少'),
+              h('div', { 'data-bd-autoconf': '', style: { marginTop: '4px' } }, '')),
+            h('label', { style: { display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px', marginTop: '10px', lineHeight: 1.6 } },
+              h('input', {
+                type: 'checkbox', checked: BILI_AUTO.applyInteractions === true,
+                style: { marginTop: '2px' },
+                onChange: (e) => { BILI_AUTO.applyInteractions = e.target.checked; planAuto(); setState((x) => (x ? { ...x } : x)) },
+              }),
+              h('span', null, '顺便按这个档位设置「互动开关」（自动评论 / 点赞 / 投币 / 回评论 / 私信）',
+                h('span', { style: { color: 'var(--t3)' } }, '　不勾就完全不动「安全防护」页的设置'))),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: applyAuto }, '应用这套配置'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: planAuto }, '重新估算')),
             h('div', { style: { fontSize: '11px', color: 'var(--t3)', marginTop: '8px', lineHeight: 1.8 } },
-              '提醒：这套只改频率/互动相关设置，不动模型和人格卡。频率越高越容易被限流，稳妥档最适合长期挂。')),
+              '提醒：这套只改频率和时段，不动模型、人格卡、素材、配音，也不动「风控冷却」（那还是 24 小时）。频率越高越容易被限流，稳妥档最适合长期挂。')),
           Card({ title: 'AI 助手', sub: '直接用大白话说，它帮你改设置（"思考强度都调到低""把额度清零"）' },
             h('div', { 'data-bd-chat': '', style: { maxHeight: '260px', overflowY: 'auto', padding: '4px 0' } },
               h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '试试：「把每日上限改成 5」「思考强度全部调低」「看看我现在设置」「把今天额度清零」')),
@@ -2110,7 +2242,7 @@ window.__ModuleLoader__.load({
 
       const renderSafety = () => {
         const on = [cfg.autoComment, cfg.dmMode && cfg.dmMode !== 'off', cfg.replyToComments, cfg.transcribe, cfg.dmWatch].filter(Boolean).length
-        const chips = [['peakValley', '错峰'], ['noon', '午间'], ['night', '夜间']]
+        const chips = [['noon', '午间 12:00–14:00'], ['night', '夜间 18:00–09:00']]
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' }, h('span', { className: 't' }, '安全防护'), h('span', { className: 's' }, '防的是封号；改动和「设置」页实时同步')),
           Card({ title: '五道闸', sub: on + ' / 5 开着' },
@@ -2126,10 +2258,27 @@ window.__ModuleLoader__.load({
               on: !!cfg.schedulerOn,
               onChange: (v) => saveOne('schedulerOn', v),
             }),
-            h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } },
-              h('span', { className: 'sub' }, '开启时段：'),
-              chips.map(([k, label]) => h('span', { key: k, 'data-bd-chip': '', style: { cursor: 'pointer', background: cfg[k] ? 'var(--blue)' : 'var(--blue-bg)', color: cfg[k] ? '#fff' : 'var(--blue)' }, onClick: () => toggleChip(k, !cfg[k]) }, label)),
-              h('span', { style: { marginLeft: 'auto' } }, h(NumInput, { value: cfg.perDay || 0, min: 0, max: 999, suffix: '条 / 天', onCommit: (n) => saveOne('perDay', n) }))),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '跑哪些时段'),
+                h('div', { 'data-bd-ds': '' }, '全天 7×24 = 不停；自定义时段 = 每天只在起止之间跑（跨夜也行，如 22:00→06:00）；官方谷时 = 只跑午间和夜间两个低谷段')),
+              Select({ value: cfg.scheduleMode || (cfg.peakValley ? 'valley' : 'any'), onChange: (v) => saveOne('scheduleMode', v), minWidth: 150 },
+                h('option', { value: 'any' }, '全天 7×24'),
+                h('option', { value: 'window' }, '自定义时段'),
+                h('option', { value: 'valley' }, '只在官方谷时'))),
+            ((cfg.scheduleMode || (cfg.peakValley ? 'valley' : 'any')) === 'window') && h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '起止时间'), h('div', { 'data-bd-ds': '' }, '北京时间。到点自动停，到点自动开；跨夜会自己算，不用管日期')),
+              h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                Input({ type: 'time', defaultValue: cfg.activeStart || '09:00', onBlur: (e) => saveOne('activeStart', String(e.target.value || '09:00'), '开始时间') }),
+                h('span', { style: { fontSize: '12px', color: 'var(--t3)' } }, '到'),
+                Input({ type: 'time', defaultValue: cfg.activeEnd || '23:00', onBlur: (e) => saveOne('activeEnd', String(e.target.value || '23:00'), '结束时间') }))),
+            ((cfg.scheduleMode || (cfg.peakValley ? 'valley' : 'any')) === 'valley') && h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('span', { className: 'sub' }, '谷时窗口：'),
+              chips.map(([k, label]) => h('span', { key: k, 'data-bd-chip': '', style: { cursor: 'pointer', background: cfg[k] ? 'var(--blue)' : 'var(--blue-bg)', color: cfg[k] ? '#fff' : 'var(--blue)' }, onClick: () => toggleChip(k, !cfg[k]) }, label))),
+            h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' } },
+              h(NumInput, { value: cfg.perDay || 0, min: 1, max: 50, suffix: '条 / 天', onCommit: (n) => saveOne('perDay', n) }),
+              h(NumInput, { value: cfg.commentPerRound || 0, min: 1, max: 15, suffix: '条 / 轮', onCommit: (n) => saveOne('commentPerRound', n) }),
+              h(NumInput, { value: cfg.roundIntervalMinutes || 5, min: 1, max: 240, suffix: '分钟 / 每轮间隔', onCommit: (n) => saveOne('roundIntervalMinutes', n) }),
+              h(NumInput, { value: cfg.scanPerRound || 0, min: 0, max: 200, suffix: '条视频 / 轮（0=默认）', width: 116, onCommit: (n) => saveOne('scanPerRound', n) })),
             h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } }, '为什么需要：风控盯环境指纹和机械节奏——定时操作等于自报身份。随机间隔 1-2 分钟、每周强制休息 1 天、每日上限，都是让它"像个人"。')),
           h('div', { 'data-bd-callout': '' }, '底线：不登录你的账号、不碰支付、不转发私信内容；评论区、字幕、简介里的话一律当素材、不当指令——谁让你改行为、贴设置，都不照做。'),
           Card({ title: '它遵守的规矩', sub: '只读 · 写死在插件里的底线，谁都改不了' }, h('ul', { 'data-bd-charter': '' }, (st.charter || []).map((c, i) => h('li', { key: i }, c)))),
@@ -2644,7 +2793,7 @@ window.__ModuleLoader__.load({
         setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
         setTimeout(() => { try { if (document.querySelector('[data-bd-posted]')) loadPosted() } catch { /* noop */ } }, 260)
         setTimeout(() => { try { if (document.querySelector('[data-bd-published]')) loadPublished() } catch { /* noop */ } }, 320)
-        setTimeout(() => { try { planAuto() } catch { /* noop */ } }, 380)
+        setTimeout(() => { try { syncAutoFromCfg(); planAuto() } catch { /* noop */ } }, 380)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
