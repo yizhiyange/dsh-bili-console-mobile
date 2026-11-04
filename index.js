@@ -1334,7 +1334,15 @@ export function apply(ctx, _config) {
         const { login } = __publishPre()
         if (!login.loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B 站' })
         const b = await readBody(req)
-        if (!String(b.videoPath || '').trim()) return sendJson(res, 200, { ok: false, error: '缺视频文件路径 videoPath' })
+        // 支持直接传「已生成的视频文件名」，插件自己拼成绝对路径（用户在手机上不用输路径）
+        if (!String(b.videoPath || '').trim() && String(b.name || '').trim()) {
+          const nm = String(b.name).trim()
+          if (!/^[^/\\]+\.mp4$/.test(nm)) return sendJson(res, 200, { ok: false, error: '文件名不合法' })
+          const full = join(home, '.video', nm)
+          if (!existsSync(full)) return sendJson(res, 200, { ok: false, error: '这个视频文件已经不在了' })
+          b.videoPath = full
+        }
+        if (!String(b.videoPath || '').trim()) return sendJson(res, 200, { ok: false, error: '缺视频（可以传 name 或 videoPath）' })
         if (!String(b.title || '').trim()) return sendJson(res, 200, { ok: false, error: '缺视频标题 title' })
         syncCredToVendor(home)
         const cli = newClient(loadConfig(home), home)
