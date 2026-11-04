@@ -833,7 +833,11 @@ export function apply(ctx, _config) {
           })
           logLine(home, r && r.success ? `已手动发动态：${text.slice(0, 30)}` : `发动态失败：${(r && r.error) || '未知'}`)
           if (r && r.success) {
-            const did = r.dynamic_id || (r.data && (r.data.dynamic_id || r.data.dyn_id)) || r.id || ''
+            // ⚠️ 必须优先用 *_str 版本：动态 id 超过 JS 安全整数范围（2^53），
+            //    直接取 dyn_id（number）会丢精度，撤回时就删不掉（2026-11-4 实测踩到）
+            const dd = (r.data && (r.data.dyn_id_str || r.data.dynamic_id_str || r.data.dyn_id || r.data.dynamic_id))
+              || r.dynamic_id || r.id || ''
+            const did = String(dd || '')
             addPublished(home, { kind: 'dynamic', id: String(did || ''), text })
           }
           return sendJson(res, 200, { ok: Boolean(r && r.success), ...(r || {}) })
