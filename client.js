@@ -599,6 +599,10 @@ window.__ModuleLoader__.load({
 
     // AI 助手的对话日志：放在组件外面，页面每 2 秒重渲染也不会被清掉
     const BILI_CHAT_LOG = []
+    // 手机省电统计（只是给用户看的「确实省了」的证据，不影响功能）
+    const BILI_SAVED = { skips: 0, polls: 0 }
+    // 长任务进行中 → 轮询要快一点（不然进度条像卡住）
+    const BILI_BUSY = { value: false }
     // 折叠面板的展开状态存在组件外面：页面每 2 秒重渲染、甚至切页回来，都不会把用户展开的东西关掉
     const BILI_UI_OPEN = { tts: false }
     // 自动模式的编辑草稿：用户在卡片里选档位/填数字时，2 秒轮询别把它冲掉
@@ -717,32 +721,69 @@ window.__ModuleLoader__.load({
 
       const toast_ = (m) => { setToast(m); if (m) setTimeout(() => setToast(''), 2400) }
 
-      // 主轮询：state 2s / rawlog 3s / report 5s（对齐 console 的节奏）
+      // 主轮询：电脑 2s / 手机自适应（空闲 12s、任务跑着 3s）
       React.useEffect(() => {
-        // 省电轮询：① 省电模式 / 安卓就把频率放慢 ② 页面切到后台（锁屏、切 App）直接不请求
-        // 这是手机上最费电的一块：原来不管你看不看，都雷打不动 2 秒打一次服务器（2026-11-1 改）
+        // 手机省电三件套（2026-11-4 加，电脑版行为一个字节不改）：
+        //   ① 空闲时 12 秒才拉一次（原来是 6 秒，电脑是 2 秒）
+        //   ② 内容没变化就**不 setState** —— 省掉一次整页 React 重渲染，这是手机上最吃 CPU 的一块
+        //   ③ 页面在后台（锁屏/切 App）一次请求都不发
         const lowPower = !!(state?.settings?.lowPower)
-        const isAndroid = /android/i.test(navigator.userAgent || '')
-        const every = (lowPower || isAndroid) ? 6000 : 2000
+        const uaMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || '')
+        const mobile = uaMobile || lowPower
+        const aliveNow = () => alive.current && !stopped
+        let stopped = false
+        let t1 = null, t2 = null, t3 = null
+        let sig = ''
+        const visible = () => !(typeof document !== 'undefined' && document.hidden)
         const tick = async () => {
-          if (typeof document !== 'undefined' && document.hidden) return
-          try { const s = await jget('/state'); if (alive.current && s.ok) { setState(s); setFails(0) } else if (alive.current) setFails((n) => n + 1) }
-          catch { if (alive.current) setFails((n) => n + 1) }
+          if (!visible()) return
+          BILI_SAVED.polls++
+          try {
+            const s = await jget('/state')
+            if (!aliveNow()) return
+            if (!s || !s.ok) { setFails((n) => n + 1); return }
+            setFails(0)
+            BILI_BUSY.value = Boolean((s.run && s.run.running) || (s.video && s.video.running))
+            if (mobile) {
+              // 去掉每秒都在变的"最近更新"时间戳，再整体比对；一模一样就跳过这次渲染
+              const copy = { ...s }
+              delete copy.now
+              let next = ''
+              try { next = JSON.stringify(copy) } catch { next = '' }
+              if (next && next === sig) { BILI_SAVED.skips++; return }
+              sig = next
+            }
+            setState(s)
+          } catch { if (aliveNow()) setFails((n) => n + 1) }
+        }
+        const loop = async () => {
+          if (stopped) return
+          await tick()
+          if (stopped) return
+          const gap = mobile ? (BILI_BUSY.value ? 3000 : 12000) : 2000
+          t1 = setTimeout(loop, gap)
         }
         const tickLog = async () => {
-          if (typeof document !== 'undefined' && document.hidden) return
-          try { const l = await jget('/rawlog'); if (alive.current) setRawlog((l && l.lines) || []) } catch {}
+          if (!visible()) return
+          try { const l = await jget('/rawlog'); if (aliveNow()) setRawlog((l && l.lines) || []) } catch {}
         }
         const tickRep = async () => {
-          if (typeof document !== 'undefined' && document.hidden) return
-          try { const r = await jget('/report'); if (alive.current) setReport(r) } catch {}
+          if (!visible()) return
+          try { const r = await jget('/report'); if (aliveNow()) setReport(r) } catch {}
         }
-        tick(); tickLog(); tickRep()
-        const t1 = setInterval(tick, every), t2 = setInterval(tickLog, (lowPower || isAndroid) ? 8000 : 3000), t3 = setInterval(tickRep, (lowPower || isAndroid) ? 15000 : 5000)
+        loop(); tickLog(); tickRep()
+        t2 = setInterval(tickLog, mobile ? 12000 : 3000)
+        t3 = setInterval(tickRep, mobile ? 25000 : 5000)
         // 切回前台立刻补一次，不用等下一拍
         const onVis = () => { if (!document.hidden) { tick(); tickLog(); tickRep() } }
         try { document.addEventListener('visibilitychange', onVis) } catch {}
-        return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); try { document.removeEventListener('visibilitychange', onVis) } catch {} }
+        return () => {
+          stopped = true
+          try { clearTimeout(t1) } catch {}
+          try { clearInterval(t2) } catch {}
+          try { clearInterval(t3) } catch {}
+          try { document.removeEventListener('visibilitychange', onVis) } catch {}
+        }
       }, [!!(state?.settings?.lowPower)])
 
       /**
@@ -1351,6 +1392,14 @@ window.__ModuleLoader__.load({
           } else {
             html += '<br>电脑：只显示进程占用'
           }
+          // 手机省电成绩单：让用户看得见"确实少跑了多少"
+          try {
+            const mobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || '')
+            if (mobile) {
+              html += '<br><span style="color:var(--t3)">手机省电：空闲 12 秒刷新一次（电脑 2 秒）'
+                + '；已跳过 ' + BILI_SAVED.skips + ' 次无变化重绘、共 ' + BILI_SAVED.polls + ' 次轮询</span>'
+            }
+          } catch { /* 忽略 */ }
           box.innerHTML = html
         } catch { /* 读不到就算了 */ }
       }
@@ -2973,7 +3022,7 @@ window.__ModuleLoader__.load({
               Select({ value: cfg.videoModel || '', onChange: (v) => saveOne('videoModel', v), minWidth: 150 },
                 h('option', { value: '' }, '自动'),
                 (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
-            ToggleRow({ label: '省电模式（针对手机）', note: '开了之后：①界面轮询从 2 秒放慢到 6 秒、手机在后台（锁屏/切 App）时完全不打请求；②私信监察间隔放宽到 3 倍；③渲染时限制 ffmpeg 单线程 + ultrafast，不再把 CPU 吃满（文件会大 10~20%，画质肉眼看不出）。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
+            ToggleRow({ label: '省电模式（针对手机）', note: '开了之后：①手机空闲时 12 秒刷新一次、任务跑着 3 秒；内容没变化就不重绘整个面板（省 CPU）；锁屏/切 App 完全不发请求；②日志只读末尾一段、超过 2MB 自动裁到最后 4000 行；③系统可用内存低于 12% 时自动释放；④私信监察间隔放宽到 3 倍；⑤渲染限制 ffmpeg 单线程 + ultrafast（文件大 10~20%，画质肉眼看不出）。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
             Card({ title: '内存（运行内存，不是存储空间）', sub: '注意：这里显示的是宿主进程总量（DSH 本体 + 本插件），不是插件单独占的' },
               h('div', { 'data-bd-meminfo': '', style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.9 } }, '读取中…'),
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
