@@ -1074,6 +1074,24 @@ window.__ModuleLoader__.load({
           }
         } catch (e) { toast_('✗ ' + String(e?.message ?? e)) }
       }
+      /** 把已生成的视频直接投稿到 B 站（不用再填路径） */
+      const publishVideoByName = async (name) => {
+        try {
+          const title0 = name.replace(/\.mp4$/i, '').replace(/^video-/, '')
+          const title = window.prompt('投稿标题（改好再确认）：', 'AI 简报 ' + title0)
+          if (title == null) return
+          if (!String(title).trim()) return toast_('标题不能空')
+          toast_('正在上传投稿，视频大可能要几分钟…')
+          const r = await jpost('/publish/video', {
+            name,
+            title: String(title).trim(),
+            desc: '由插件自动生成',
+            tags: 'AI,短视频',
+          })
+          if (!r || !r.ok) return toast_('投稿失败：' + ((r && r.error) || '未知'))
+          toast_('已提交投稿，等 B站审核（' + (r.bvid || '') + '）')
+        } catch (e) { toast_('投稿失败：' + String(e?.message ?? e)) }
+      }
       /** 删掉一个生成的视频（手机存储紧张时用） */
       const deleteVideo = async (name) => {
         try {
@@ -1211,6 +1229,11 @@ window.__ModuleLoader__.load({
               exp.textContent = '📤 导出到手机并播放'
               exp.onclick = () => exportVideo(f.name)
               bar.appendChild(exp)
+              const pub = document.createElement('button')
+              pub.className = 'primary sm'
+              pub.textContent = '📮 投稿到 B 站'
+              pub.onclick = () => publishVideoByName(f.name)
+              bar.appendChild(pub)
               const del = document.createElement('button')
               del.className = 'ghost sm'
               del.textContent = '🗑 删除'
@@ -2555,8 +2578,9 @@ window.__ModuleLoader__.load({
                 Input({ defaultValue: cfg.videoTtsUrl || '', placeholder: 'http://127.0.0.1:9880/tts', onBlur: (e) => saveOne('videoTtsUrl', String(e.target.value || '').trim(), 'TTS 地址') }),
                 h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { const inp = document.querySelector('[data-bd-ttsUrl] input'); toast_('地址填好后点「试听」验证') } }, '提示'))),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
-              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '配音声线'), h('div', { 'data-bd-ds': '' }, '都是微软 edge-tts 的音色，免费；云希=年轻男声、晓晓=标准女声、云野=沉稳男声、晓伊=温柔女声、云夏=少年男声')),
-              Select({ value: cfg.videoVoiceName || 'zh-CN-XiaoxiaoNeural', onChange: (v) => saveOne('videoVoiceName', v), minWidth: 170 },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '配音声线'),
+                h('div', { 'data-bd-ds': '' }, '下拉是常用音色（快捷选择）；**想用别的，直接在下面输入框填音色代码**，比如 zh-CN-XiaoxiaoNeural、ja-JP-NanamiNeural（日语）、en-US-AriaNeural（英语）。完整列表搜「edge-tts 音色列表」')),
+              Select({ value: cfg.videoVoiceName || 'zh-CN-XiaoxiaoNeural', onChange: (v) => { saveOne('videoVoiceName', v); toast_('声线改成 ' + v) }, minWidth: 170 },
                 h('option', { value: 'zh-CN-XiaoxiaoNeural' }, '晓晓（标准女声）'),
                 h('option', { value: 'zh-CN-YunxiNeural' }, '云希（年轻男声）'),
                 h('option', { value: 'zh-CN-YunyangNeural' }, '云野（播音男声）'),
@@ -2564,7 +2588,8 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'zh-CN-YunjianNeural' }, '云健（活力男声）'),
                 h('option', { value: 'zh-CN-liaoning-XiaobeiNeural' }, '晓北（东北口音女声）'),
                 h('option', { value: 'zh-CN-shaanxi-XiaoniNeural' }, '小妮（陕西口音女声）'),
-                h('option', { value: 'zh-CN-YunxiaNeural' }, '云夏（少年男声）'))),
+                h('option', { value: 'zh-CN-YunxiaNeural' }, '云夏（少年男声）')),
+              Input({ defaultValue: cfg.videoVoiceName || '', placeholder: '也可直接填音色代码，如 ja-JP-NanamiNeural', onBlur: (e) => { const v = String(e.target.value || '').trim(); if (v) saveOne('videoVoiceName', v, '声线') } })),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '语速'), h('div', { 'data-bd-ds': '' }, '微软原生支持，百分比如 -20%（慢）/ +20%（快）')),
               Select({ value: cfg.videoVoiceRate || '+0%', onChange: (v) => saveOne('videoVoiceRate', v), minWidth: 110 },
@@ -2572,7 +2597,8 @@ window.__ModuleLoader__.load({
                 h('option', { value: '-15%' }, '-15% 稍慢'),
                 h('option', { value: '+0%' }, '正常'),
                 h('option', { value: '+15%' }, '+15% 稍快'),
-                h('option', { value: '+30%' }, '+30% 很快'))),
+                h('option', { value: '+30%' }, '+30% 很快')),
+              Input({ defaultValue: cfg.videoVoiceRate || '', placeholder: '也可自填，如 +7% / -12%', onBlur: (e) => { const v = String(e.target.value || '').trim(); if (v) saveOne('videoVoiceRate', v, '语速') } })),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '音调'), h('div', { 'data-bd-ds': '' }, '负值更低沉，正值更清亮/稚嫩')),
               Select({ value: cfg.videoVoicePitch || '+0Hz', onChange: (v) => saveOne('videoVoicePitch', v), minWidth: 110 },
@@ -2580,13 +2606,15 @@ window.__ModuleLoader__.load({
                 h('option', { value: '-15Hz' }, '-15Hz 稍低'),
                 h('option', { value: '+0Hz' }, '正常'),
                 h('option', { value: '+15Hz' }, '+15Hz 稍高'),
-                h('option', { value: '+30Hz' }, '+30Hz 清亮'))),
+                h('option', { value: '+30Hz' }, '+30Hz 清亮')),
+              Input({ defaultValue: cfg.videoVoicePitch || '', placeholder: '也可自填，如 +22Hz', onBlur: (e) => { const v = String(e.target.value || '').trim(); if (v) saveOne('videoVoicePitch', v, '音调') } })),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '音量'), h('div', { 'data-bd-ds': '' }, '配音音量，和视频画面的音量平衡')),
               Select({ value: cfg.videoVoiceVolume || '+0%', onChange: (v) => saveOne('videoVoiceVolume', v), minWidth: 110 },
                 h('option', { value: '-20%' }, '-20% 小声'),
                 h('option', { value: '+0%' }, '正常'),
-                h('option', { value: '+20%' }, '+20% 大声'))),
+                h('option', { value: '+20%' }, '+20% 大声')),
+              Input({ defaultValue: cfg.videoVoiceVolume || '', placeholder: '也可自填，如 -5%', onBlur: (e) => { const v = String(e.target.value || '').trim(); if (v) saveOne('videoVoiceVolume', v, '音量') } })),
             (cfg.videoVoice !== false) && h('div', { 'data-bd-setrow': '', 'data-bd-ttsrow': '' },
               h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '试听一下'), h('div', { 'data-bd-ds': '' }, '用上面这套配置念一句，听完再生成，省得白等')),
               h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
