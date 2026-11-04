@@ -785,33 +785,57 @@ async def bili_crawl(keyword: str, max_videos: int = 5, comments_per_video: int 
 import subprocess
 
 
+def _ffmpeg_exe() -> str:
+    """找 ffmpeg：先看 PATH，找不到就用 imageio-ffmpeg 自带的那个。
+    ⚠️ 2026-11-4 实测：Windows 上 ffmpeg 经常不在 PATH，
+    以前这里直接写 "ffmpeg" → subprocess 抛 [WinError 2] → 整个投稿失败。"""
+    import shutil
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
+
 def _extract_cover_from_video(video_path: str) -> Picture:
-    """从视频第3秒截取一帧作为封面，返回 Picture 对象"""
-    tmp_cover = os.path.join(tempfile.gettempdir(), f"bili_cover_{os.getpid()}.png")
+    """从视频第3秒截取一帧作为封面，返回 Picture 对象。
+    找不到 ffmpeg 或截帧失败时，退回"自己画一张深色封面"，绝不因此让投稿失败。"""
+    ff = _ffmpeg_exe()
+    for seek, tag in (("3", "bili_cover"), ("0", "bili_cover2")):
+        tmp = os.path.join(tempfile.gettempdir(), f"{tag}_{os.getpid()}.png")
+        try:
+            try:
+                subprocess.run(
+                    [ff, "-y", "-ss", seek, "-i", video_path,
+                     "-vframes", "1", "-q:v", "2", tmp],
+                    capture_output=True, timeout=30,
+                )
+            except OSError:
+                break          # 连 ffmpeg 都起不来，别试第二次
+            if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                return Picture.from_file(tmp)
+        finally:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+    # 兜底：画一张纯色封面（B站 只要求有封面，没要求内容）
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", "3", "-i", video_path,
-             "-vframes", "1", "-q:v", "2", tmp_cover],
-            capture_output=True, timeout=30,
-        )
-        if os.path.isfile(tmp_cover) and os.path.getsize(tmp_cover) > 0:
-            return Picture.from_file(tmp_cover)
-    finally:
-        if os.path.isfile(tmp_cover):
-            os.remove(tmp_cover)
-    # fallback: 第0秒
-    tmp_cover2 = os.path.join(tempfile.gettempdir(), f"bili_cover2_{os.getpid()}.png")
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", "0", "-i", video_path,
-             "-vframes", "1", "-q:v", "2", tmp_cover2],
-            capture_output=True, timeout=30,
-        )
-        if os.path.isfile(tmp_cover2) and os.path.getsize(tmp_cover2) > 0:
-            return Picture.from_file(tmp_cover2)
-    finally:
-        if os.path.isfile(tmp_cover2):
-            os.remove(tmp_cover2)
+        from PIL import Image, ImageDraw
+        tmp3 = os.path.join(tempfile.gettempdir(), f"bili_cover_fallback_{os.getpid()}.png")
+        img = Image.new("RGB", (1280, 720), (18, 20, 26))
+        d = ImageDraw.Draw(img)
+        d.rectangle([0, 0, 12, 720], fill=(64, 158, 255))
+        img.save(tmp3)
+        pic = Picture.from_file(tmp3)
+        try:
+            os.remove(tmp3)
+        except OSError:
+            pass
+        return pic
+    except Exception:
+        pass
     raise RuntimeError(f"无法从视频截取封面: {video_path}")
 
 
