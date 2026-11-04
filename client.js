@@ -601,6 +601,8 @@ window.__ModuleLoader__.load({
     const BILI_CHAT_LOG = []
     // 折叠面板的展开状态存在组件外面：页面每 2 秒重渲染、甚至切页回来，都不会把用户展开的东西关掉
     const BILI_UI_OPEN = { tts: false }
+    // 自动模式的编辑草稿：用户在卡片里选档位/填数字时，2 秒轮询别把它冲掉
+    const BILI_AUTO = { preset: 'safe', allDay: false, perDay: 6, commentPerRound: 3, cooldownMinutes: 8 }
 
     /* ────────────── 主组件 ────────────── */
     function Console() {
@@ -767,6 +769,31 @@ window.__ModuleLoader__.load({
           toast_('已加进素材库 ' + n + ' 个' + ((r.skipped || []).length ? ('，跳过 ' + r.skipped.length + ' 个') : ''))
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
+      }
+      /** 自动模式：预演 + 应用 */
+      const autoOverrides = () => ({
+        perDay: Number(BILI_AUTO.perDay) || 6,
+        commentPerRound: Number(BILI_AUTO.commentPerRound) || 3,
+        cooldownMinutes: Number(BILI_AUTO.cooldownMinutes) || 8,
+      })
+      const planAuto = async () => {
+        try {
+          const r = await jpost('/automode/plan', { preset: BILI_AUTO.preset, allDay: BILI_AUTO.allDay, overrides: autoOverrides() })
+          const box = document.querySelector('[data-bd-autoplan]')
+          if (!box || !r || !r.ok) return
+          const e = r.estimate || {}
+          box.textContent = '预计：一天约 ' + (e.rounds || 0) + ' 轮，每轮 ' + (e.perRound || 0) + ' 条，合计约 '
+            + (e.comments || 0) + ' 条评论（间隔 ≥ ' + (e.effGapMinutes || 0) + ' 分钟，覆盖 ' + (e.windowHours || 0) + ' 小时）'
+        } catch { /* 忽略 */ }
+      }
+      const applyAuto = async () => {
+        try {
+          if (!window.confirm('应用自动模式？会覆盖：每日上限 / 每轮条数 / 间隔 / 点赞投币 / 私信 / 时段。\n其余设置（模型、人格卡、素材、配音）保持不变。')) return
+          const r = await jpost('/automode/apply', { preset: BILI_AUTO.preset, allDay: BILI_AUTO.allDay, overrides: autoOverrides() })
+          if (!r || !r.ok) return toast_('应用失败：' + ((r && r.error) || ''))
+          toast_('已应用：' + (r.summary || ''))
+          planAuto()
+        } catch (e) { toast_('应用失败：' + String(e?.message ?? e)) }
       }
       /** 撤回单条评论（精确按 bvid+rpid 删） */
       const retractOneComment = async (it) => {
@@ -1855,6 +1882,31 @@ window.__ModuleLoader__.load({
                   'data-bd-btn': '', className: 'outline sm', onClick: resetQuota,
                   title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
                 }, '重置今日额度')))),
+          Card({ title: '自动模式（挂机）', sub: '一键配好「像机器人一样自己跑」的参数；套完还能逐项改' },
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+              ...['safe', 'balanced', 'aggressive'].map((k) => h('button', {
+                key: k, 'data-bd-btn': '',
+                className: 'sm ' + (BILI_AUTO.preset === k ? 'primary' : 'ghost'),
+                onClick: () => { BILI_AUTO.preset = k; planAuto(); setState((x) => (x ? { ...x } : x)) },
+              }, k === 'safe' ? '稳妥' : (k === 'balanced' ? '平衡' : '激进'))),
+              h('label', { style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '12px' } },
+                h('input', {
+                  type: 'checkbox', checked: BILI_AUTO.allDay,
+                  onChange: (e) => { BILI_AUTO.allDay = e.target.checked; planAuto() },
+                }), '24 小时都跑（关掉=只在白天时段）')),
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px', alignItems: 'center' } },
+              h('span', { style: { fontSize: '12px' } }, '每天上限'),
+              h('input', { type: 'number', value: BILI_AUTO.perDay, min: 1, max: 50, style: { width: '70px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.perDay = Number(e.target.value) || 6; planAuto() } }),
+              h('span', { style: { fontSize: '12px' } }, '每轮'),
+              h('input', { type: 'number', value: BILI_AUTO.commentPerRound, min: 1, max: 15, style: { width: '70px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.commentPerRound = Number(e.target.value) || 3; planAuto() } }),
+              h('span', { style: { fontSize: '12px' } }, '间隔(分)'),
+              h('input', { type: 'number', value: BILI_AUTO.cooldownMinutes, min: 1, max: 240, style: { width: '78px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' }, onChange: (e) => { BILI_AUTO.cooldownMinutes = Number(e.target.value) || 8; planAuto() } })),
+            h('div', { 'data-bd-autoplan': '', style: { fontSize: '11.5px', color: 'var(--t3)', marginTop: '8px', lineHeight: 1.7 } }, '点档位或改数字，这里会算出一天大概发多少条'),
+            h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: applyAuto }, '应用这套配置'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: planAuto }, '重新估算')),
+            h('div', { style: { fontSize: '11px', color: 'var(--t3)', marginTop: '8px', lineHeight: 1.8 } },
+              '提醒：这套只改频率/互动相关设置，不动模型和人格卡。频率越高越容易被限流，稳妥档最适合长期挂。')),
           Card({ title: 'AI 助手', sub: '直接用大白话说，它帮你改设置（"思考强度都调到低""把额度清零"）' },
             h('div', { 'data-bd-chat': '', style: { maxHeight: '260px', overflowY: 'auto', padding: '4px 0' } },
               h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '试试：「把每日上限改成 5」「思考强度全部调低」「看看我现在设置」「把今天额度清零」')),
@@ -2592,6 +2644,7 @@ window.__ModuleLoader__.load({
         setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
         setTimeout(() => { try { if (document.querySelector('[data-bd-posted]')) loadPosted() } catch { /* noop */ } }, 260)
         setTimeout(() => { try { if (document.querySelector('[data-bd-published]')) loadPublished() } catch { /* noop */ } }, 320)
+        setTimeout(() => { try { planAuto() } catch { /* noop */ } }, 380)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
