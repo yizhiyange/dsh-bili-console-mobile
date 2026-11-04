@@ -42,6 +42,7 @@ import { deleteDynamic, deleteArchive, readCred } from './lib/biliweb.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
+import { PRESETS, computeAutoConfig, describeAuto, estimateDay } from './lib/automode.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -1067,6 +1068,27 @@ export function apply(ctx, _config) {
         })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
+    // 自动模式：一键套一整套「挂机」配置（2026-11-1）
+    if (req.method === 'POST' && path === '/automode/apply') {
+      try {
+        const b = await readBody(req)
+        const preset = String(b.preset || 'safe')
+        const allDay = b.allDay === true
+        const values = computeAutoConfig(preset, b.overrides || {}, { allDay })
+        const c = loadConfig(home)
+        saveConfig(home, { ...c, ...values })
+        const est = estimateDay(values, allDay)
+        logLine(home, `应用自动模式（${(PRESETS[preset] || PRESETS.safe).label}）：` + describeAuto(values, allDay))
+        return sendJson(res, 200, { ok: true, values, estimate: est, summary: describeAuto(values, allDay) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+    if (req.method === 'POST' && path === '/automode/plan') {
+      try {
+        const b = await readBody(req)
+        const values = computeAutoConfig(String(b.preset || 'safe'), b.overrides || {}, { allDay: b.allDay === true })
+        return sendJson(res, 200, { ok: true, values, estimate: estimateDay(values, b.allDay === true), summary: describeAuto(values, b.allDay === true) })
+      } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
     // 我发过的动态 / 投稿（要撤回先得有账本）
     if (req.method === 'GET' && path === '/published') {
       try {
@@ -1810,6 +1832,10 @@ export function apply(ctx, _config) {
           if (safeMode) return
           if (!loginStatus(home).loggedIn) return
           if (!inWindow({ noon: c.noon, night: c.night }, new Date()) && c.peakValley) return
+          if (roundRunning) return
+          // 人类式抖动：不在整点整分同时开工，随机等 0~3 分钟（多账号/长期挂更像人）
+          const jitterMs = Math.floor(Math.random() * 180 * 1000)
+          if (jitterMs > 5000) await new Promise((r) => setTimeout(r, jitterMs))
           if (roundRunning) return
           roundRunning = true
           stopRequested = false
