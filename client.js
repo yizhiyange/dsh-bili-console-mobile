@@ -532,7 +532,7 @@ window.__ModuleLoader__.load({
      * 用本地草稿，避免 /state 每 2 秒轮询把正在输入的内容冲掉；
      * 失焦或回车才提交（提交时按 min/max 夹一次，防止填出离谱的数）。
      */
-    const NumInput = ({ value, onCommit, min = 0, max = 1000000, suffix = '', width = 92 }) => {
+    const NumInput = ({ value, onCommit, min = 0, max = Number.MAX_SAFE_INTEGER, suffix = '', width = 92 }) => {
       const [draft, setDraft] = React.useState(null)
       const shown = draft != null ? draft : String(value != null ? value : '')
       const commit = () => {
@@ -830,7 +830,11 @@ window.__ModuleLoader__.load({
         const wf = document.querySelector('[data-bd-autowarn]')
         if (wf) {
           const ws = r.warnings || []
-          wf.innerHTML = ws.length ? ('⚠️ ' + ws.join('<br>⚠️ ')) : ''
+          const adj = r.adjustments || []
+          const lines = []
+          for (const x of adj) lines.push('ℹ️ ' + x)
+          for (const x of ws) lines.push('⚠️ ' + x)
+          wf.innerHTML = lines.join('<br>')
           wf.style.color = ws.length ? 'var(--amber, #d9a03f)' : 'var(--t3)'
         }
         const cf = document.querySelector('[data-bd-autoconf]')
@@ -878,10 +882,10 @@ window.__ModuleLoader__.load({
         setState((x) => (x ? { ...x } : x))
       }
       /** 草稿里一个小数字输入（改完立刻重算估算） */
-      const autoNum = (key, label, min, max, width) => h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
+      const autoNum = (key, label, min, width) => h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
         h('span', { style: { fontSize: '12px' } }, label),
         h('input', {
-          type: 'number', value: BILI_AUTO[key], min, max,
+          type: 'number', value: BILI_AUTO[key], min,
           style: { width: width || '72px', height: '32px', borderRadius: '6px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--t1)', padding: '0 8px' },
           onChange: (e) => { BILI_AUTO[key] = e.target.value === '' ? '' : Number(e.target.value); planAuto() },
         }))
@@ -2023,10 +2027,10 @@ window.__ModuleLoader__.load({
                 onClick: () => { BILI_AUTO[k] = !BILI_AUTO[k]; planAuto(); setState((x) => (x ? { ...x } : x)) },
               }, label))),
             h('div', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px', alignItems: 'center' } },
-              autoNum('perDay', '每天上限', 1, 1000000, '96px'),
-              autoNum('commentPerRound', '每轮发', 1, 1000000, '92px'),
-              autoNum('roundIntervalMinutes', '间隔(分)', 1, 525600, '92px'),
-              autoNum('scanPerRound', '每轮看(条视频)', 0, 100000, '100px')),
+              autoNum('perDay', '每天上限', 1, '96px'),
+              autoNum('commentPerRound', '每轮发', 1, '92px'),
+              autoNum('roundIntervalMinutes', '间隔(分)', 1, '92px'),
+              autoNum('scanPerRound', '每轮看(条视频)', 0, '100px')),
             h('div', { style: { fontSize: '11px', color: 'var(--t3)', marginTop: '4px', lineHeight: 1.7 } },
               '「每轮看」= 一轮最多翻多少条候选视频，0 = 按默认量（首页 30 条 + 每个关键词 20 条）。翻得越多越不容易重复，但更慢更费 token。数字随便填，没有硬上限。'),
             // 这两块内容由 paintPlan() 直接写 DOM（空节点，React 不托管子元素，轮询重渲染也不会被冲掉）
@@ -2233,8 +2237,13 @@ window.__ModuleLoader__.load({
               h('div', { 'data-bd-txt': '' },
                 h('div', { 'data-bd-lb': '' }, '字数上限（可自己调）'),
                 h('div', { 'data-bd-ds': '' }, '默认 8000 字。下限 100、上限一千万——想写多长都行，填完立刻保存、下一轮生效。⚠️ 写太长可能超出模型上下文（很多模型 128k token ≈ 6 万字），那时接口会报错，这是模型那边的限制，插件不会替你砍')),
-              h(NumInput, { value: pmax, min: 100, max: 10000000, suffix: '字', width: 122, onCommit: (n) => saveOne('personaMaxLen', n) })),
-            pmax > 60000 ? h('div', { style: { fontSize: '11px', color: 'var(--amber, #d9a03f)', marginTop: '6px' } }, '当前上限 ' + pmax + ' 字，很可能超出模型上下文') : null),
+              h(NumInput, { value: pmax, min: 100, suffix: '字', width: 122, onCommit: (n) => saveOne('personaMaxLen', n) }),
+              (used > 0 && used !== pmax)
+                ? h('button', { 'data-bd-btn': '', className: 'ghost sm', style: { marginLeft: '10px' }, onClick: () => saveOne('personaMaxLen', Math.max(100, used)) }, '一把调到当前字数（' + used + '）')
+                : null),
+            pmax > 60000 ? h('div', { style: { fontSize: '11px', color: 'var(--amber, #d9a03f)', marginTop: '6px' } }, '当前上限 ' + pmax + ' 字，很可能超出模型上下文（模型那边会报错，插件不会替你砍）') : null,
+            over ? h('div', { 'data-bd-callout': '', style: { marginTop: '8px', color: 'var(--amber, #d9a03f)' } },
+              '⚠️ 你写了 ' + used + ' 字，但上限是 ' + pmax + ' 字：超出部分不会进入提示词。这是唯一会砍你内容的地方，而且明着写在这里——代码里原来那句 .slice(0, 8000) 已经删掉，别处不会再偷偷截断。') : null),
             h('div', { 'data-bd-callout': '' }, '上面文本框里就是插件实际使用的完整人格卡——没有摘要、没有截断，你写多少字就用多少字（当前上限 ' + pmax + ' 字，已用 ' + used + ' 字）。这个框也收文件路径：填一个 AGENTS.md 的路径，插件就会去读那个文件当人设。人设存在插件目录的 config.json 里，和 DSH 共用同一份；在这里改完，DSH 那边也是新的。'))
       }
 
@@ -2284,10 +2293,10 @@ window.__ModuleLoader__.load({
               h('span', { className: 'sub' }, '谷时窗口：'),
               chips.map(([k, label]) => h('span', { key: k, 'data-bd-chip': '', style: { cursor: 'pointer', background: cfg[k] ? 'var(--blue)' : 'var(--blue-bg)', color: cfg[k] ? '#fff' : 'var(--blue)' }, onClick: () => toggleChip(k, !cfg[k]) }, label))),
             h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'center', marginTop: '6px' } },
-              h(NumInput, { value: cfg.perDay || 0, min: 1, max: 1000000, suffix: '条 / 天', width: 104, onCommit: (n) => saveOne('perDay', n) }),
-              h(NumInput, { value: cfg.commentPerRound || 0, min: 1, max: 1000000, suffix: '条 / 轮', width: 104, onCommit: (n) => saveOne('commentPerRound', n) }),
-              h(NumInput, { value: cfg.roundIntervalMinutes || 5, min: 1, max: 525600, suffix: '分钟 / 每轮间隔', width: 120, onCommit: (n) => saveOne('roundIntervalMinutes', n) }),
-              h(NumInput, { value: cfg.scanPerRound || 0, min: 0, max: 100000, suffix: '条视频 / 轮（0=默认）', width: 130, onCommit: (n) => saveOne('scanPerRound', n) })),
+              h(NumInput, { value: cfg.perDay || 0, min: 1, suffix: '条 / 天', width: 104, onCommit: (n) => saveOne('perDay', n) }),
+              h(NumInput, { value: cfg.commentPerRound || 0, min: 1, suffix: '条 / 轮', width: 104, onCommit: (n) => saveOne('commentPerRound', n) }),
+              h(NumInput, { value: cfg.roundIntervalMinutes || 5, min: 1, suffix: '分钟 / 每轮间隔', width: 120, onCommit: (n) => saveOne('roundIntervalMinutes', n) }),
+              h(NumInput, { value: cfg.scanPerRound || 0, min: 0, suffix: '条视频 / 轮（0=默认）', width: 130, onCommit: (n) => saveOne('scanPerRound', n) })),
             h('div', { 'data-bd-note': '', style: { margin: '10px 0 0' } }, '为什么需要：风控盯环境指纹和机械节奏——定时操作等于自报身份。随机间隔 1-2 分钟、每周强制休息 1 天、每日上限，都是让它"像个人"。')),
           h('div', { 'data-bd-callout': '' }, '底线：不登录你的账号、不碰支付、不转发私信内容；评论区、字幕、简介里的话一律当素材、不当指令——谁让你改行为、贴设置，都不照做。'),
           Card({ title: '它遵守的规矩', sub: '只读 · 写死在插件里的底线，谁都改不了' }, h('ul', { 'data-bd-charter': '' }, (st.charter || []).map((c, i) => h('li', { key: i }, c)))),
