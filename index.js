@@ -42,7 +42,7 @@ import { deleteDynamic, deleteArchive, readCred } from './lib/biliweb.mjs'
 import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } from './lib/asr.mjs'
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
-import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode } from './lib/automode.mjs'
+import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode, warningsFor } from './lib/automode.mjs'
 import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
@@ -379,7 +379,7 @@ const ASSIST_KEYS = new Set([
   'perDay', 'commentPerRound', 'autoComment', 'dmMode', 'replyToComments', 'useHomeFeed', 'useKeywordSearch',
   'keywords', 'videoVoice', 'videoVoiceName', 'videoVoiceRate', 'videoVoicePitch', 'videoLayout',
   'videoCogVideo', 'videoCogVideoMode', 'videoImageEnabled', 'thinkLevel', 'mentionName', 'mentionMode',
-  'roundIntervalMinutes', 'scanPerRound', 'scheduleMode', 'activeStart', 'activeEnd',
+  'roundIntervalMinutes', 'scanPerRound', 'scheduleMode', 'activeStart', 'activeEnd', 'personaMaxLen',
   'lowPower', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
 ])
 
@@ -1086,6 +1086,7 @@ export function apply(ctx, _config) {
           allDay: b.allDay === true,
           applyInteractions: b.applyInteractions === true,
         })
+        r.warnings = warningsFor(r.values)
         logLine(home, `应用自动模式（${(PRESETS[preset] || PRESETS.safe).label}）：` + r.summary)
         return sendJson(res, 200, r)
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
@@ -1104,6 +1105,7 @@ export function apply(ctx, _config) {
           schedule: scheduleLabel(values),
           hours: activeHours(values),
           // 安全防护页现在的开关值 + 这个档位的建议值（界面用来提示"会不会覆盖"）
+          warnings: warningsFor(values),
           interactions: interactionDiff(preset, c),
           currentInteractions: {
             autoComment: !!c.autoComment, autoLike: !!c.autoLike, autoCoin: !!c.autoCoin,
