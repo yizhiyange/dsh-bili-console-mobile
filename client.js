@@ -599,6 +599,8 @@ window.__ModuleLoader__.load({
 
     // AI 助手的对话日志：放在组件外面，页面每 2 秒重渲染也不会被清掉
     const BILI_CHAT_LOG = []
+    // 折叠面板的展开状态存在组件外面：页面每 2 秒重渲染、甚至切页回来，都不会把用户展开的东西关掉
+    const BILI_UI_OPEN = { tts: false }
 
     /* ────────────── 主组件 ────────────── */
     function Console() {
@@ -766,6 +768,52 @@ window.__ModuleLoader__.load({
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }
+      /** 撤回单条评论（精确按 bvid+rpid 删） */
+      const retractOneComment = async (it) => {
+        try {
+          if (!window.confirm('撤回这条评论？\n「' + String(it.text || '').slice(0, 40) + '」')) return
+          const r = await jpost('/posted/retract', { bvid: it.bvid, rpid: it.rpid })
+          if (!r || !r.ok) return toast_('撤回失败：' + ((r && r.error) || (r && r.message) || '未知'))
+          toast_('已撤回')
+          loadPosted()
+        } catch (e) { toast_('撤回失败：' + String(e?.message ?? e)) }
+      }
+      /** 我发过的动态/投稿 + 撤回 */
+      const loadPublished = async () => {
+        try {
+          const box = document.querySelector('[data-bd-published]')
+          if (box) box.innerHTML = '<div style="font-size:12px;color:var(--t3)">读取中…</div>'
+          const r = await jget('/published')
+          if (!box) return
+          const items = (r && r.items) || []
+          if (!items.length) { box.innerHTML = '<div style="font-size:12px;color:var(--t3)">还没有记录（发过动态或投稿后会出现在这里）</div>'; return }
+          box.innerHTML = ''
+          for (const it of items) {
+            const row = document.createElement('div')
+            row.style.cssText = 'padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:var(--surface)'
+            const t = document.createElement('div')
+            t.style.cssText = 'font-size:12px;line-height:1.6'
+            t.textContent = (it.kind === 'video' ? '🎬 投稿：' : '📝 动态：') + String(it.text || '').slice(0, 50)
+            const meta = document.createElement('div')
+            meta.style.cssText = 'font-size:11px;color:var(--t3);margin-top:3px'
+            meta.textContent = new Date(it.at).toLocaleString('zh-CN', { hour12: false }) + (it.bvid ? (' · ' + it.bvid) : '') + (it.id ? (' · id ' + it.id) : '')
+            const bar = document.createElement('div')
+            bar.style.cssText = 'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'
+            const b = document.createElement('button')
+            b.className = 'ghost sm'; b.textContent = '↩ 撤回'
+            b.style.color = 'var(--red, #e35d6a)'
+            b.onclick = async () => {
+              if (!window.confirm('确定撤回？这条会从 B站 上删掉，删了没法恢复。')) return
+              const rr = await jpost('/published/retract', { kind: it.kind, id: it.id || it.bvid, aid: it.aid, bvid: it.bvid })
+              if (rr && rr.ok) { toast_('已撤回'); loadPublished() }
+              else toast_('撤回失败：' + ((rr && (rr.message || rr.error)) || 'B站 接口可能改版了'))
+            }
+            bar.appendChild(b)
+            row.appendChild(t); row.appendChild(meta); row.appendChild(bar)
+            box.appendChild(row)
+          }
+        } catch { /* 读不到就算了 */ }
+      }
       /** 我发过的评论：带直达链接，点开就滚到那条评论 */
       const loadPosted = async () => {
         try {
@@ -787,6 +835,11 @@ window.__ModuleLoader__.load({
             meta.textContent = (it.at || '') + ' · ' + (it.title || it.bvid || '')
             const bar = document.createElement('div')
             bar.style.cssText = 'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'
+            const rb = document.createElement('button')
+            rb.className = 'ghost sm'; rb.textContent = '↩ 撤回'
+            rb.style.color = 'var(--red, #e35d6a)'
+            rb.onclick = () => retractOneComment(it)
+            bar.appendChild(rb)
             if (it.link) {
               const b = document.createElement('button')
               b.className = 'ghost sm'; b.textContent = '🔎 去看这条评论'
@@ -1808,6 +1861,10 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'center' } },
               Input({ 'data-bd-chatinput': '', placeholder: '跟它说你想改什么…', onEnter: () => sendChat() }),
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: sendChat }, '发送'))),
+          Card({ title: '我发过的动态 / 投稿', sub: '每条都能撤回（B站 网页接口，属于实验性：改版可能失效，失败会如实提示）' },
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadPublished }, '刷新')),
+            h('div', { 'data-bd-published': '' }, h('div', { style: { fontSize: '12px', color: 'var(--t3)' } }, '点「刷新」看发过的动态和投稿'))),
           Card({ title: '我发过的评论', sub: '每条都能点开直达 B站 那条评论（滚过去就能看到）' },
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: loadPosted }, '刷新')),
@@ -2534,6 +2591,7 @@ window.__ModuleLoader__.load({
         }
         setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
         setTimeout(() => { try { if (document.querySelector('[data-bd-posted]')) loadPosted() } catch { /* noop */ } }, 260)
+        setTimeout(() => { try { if (document.querySelector('[data-bd-published]')) loadPublished() } catch { /* noop */ } }, 320)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
@@ -2565,7 +2623,12 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-vglog': '', style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '120px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' } }, '')),
           Card({ title: '视频生成设置', sub: '独立配置，和发评论的分开' },
             ToggleRow({ label: '配音（需联网）', note: '用微软 edge-tts 免费合成旁白（就是你要的「A 级 TTS」）；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
-            (cfg.videoVoice !== false) && h('details', { 'data-bd-ttsadv': '', style: { marginTop: '4px' } },
+            (cfg.videoVoice !== false) && h('details', {
+              'data-bd-ttsadv': '',
+              style: { marginTop: '4px' },
+              open: BILI_UI_OPEN.tts,   // 受控：靠模块变量记状态，轮询重渲染不会把它关掉
+              onToggle: (e) => { BILI_UI_OPEN.tts = Boolean(e.target.open) },
+            },
               h('summary', { style: { cursor: 'pointer', fontSize: '12.5px', color: 'var(--blue)', padding: '8px 0', userSelect: 'none' } },
                 '🎙 配音设置（点开：引擎 / 声线 / 语速 / 音调 / 试听）'),
               h('div', { style: { paddingLeft: '2px' } },
