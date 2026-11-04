@@ -97,6 +97,7 @@ export const Config = !z ? undefined : z.object({
   videoLayout: z.string().default('auto').extra('volatile', true),
   videoTtsEngine: z.string().default('edge').extra('volatile', true),
   videoTtsUrl: z.string().default('').extra('volatile', true),
+  videoTtsModel: z.string().default('').extra('volatile', true),
   videoVoiceName: z.string().default('zh-CN-XiaoxiaoNeural').extra('volatile', true),
   videoVoiceRate: z.string().default('+0%').extra('volatile', true),
   videoVoicePitch: z.string().default('+0Hz').extra('volatile', true),
