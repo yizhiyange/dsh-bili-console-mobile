@@ -2228,19 +2228,28 @@ window.__ModuleLoader__.load({
               diag
                 ? h('div', { style: { fontSize: '12px' } },
                   h('div', null, '配置目录：' + (diag.home || '?') + (diag.homeExists ? ' ✓ 存在' : ' ✗ 不存在')),
-                  h('div', null, '找到 profile：' + (diag.profiles && diag.profiles.length
-                    ? diag.profiles.map((p) => p.name + (p.exists ? '（' + p.bytes + ' 字）' : '（无配置）')).join('、')
-                    : '一个都没有')),
                   h('div', null, '密钥文件：' + (diag.refs && diag.refs.length
-                    ? diag.refs.length + ' 个（' + diag.refs.join('、') + '）'
-                    : '0 个（' + (diag.home || '~/.dsh') + '/.credentials.yaml 没读到）')),
-                  (diag.problems && diag.problems.length)
+                    ? (diag.refs.length + ' 个（' + diag.refs.join('、') + '）')
+                    : '0 个（.credentials.yaml 没读到）')),
+                  h('div', { style: { marginTop: '6px' } }, '扫了 ' + (((diag.files || []).length) || 0) + ' 个配置文件：'),
+                  (diag.files || []).slice(0, 8).map((f, i2) => h('div', {
+                    key: 'f' + i2,
+                    style: { color: f.providers ? 'var(--green, #2e7d32)' : 'var(--t3)' },
+                  }, '· ' + f.file + '（' + f.bytes + 'B，' + f.providers + ' 个 provider）')),
+                  ((diag.files || []).length > 8
+                    ? h('div', { style: { color: 'var(--t3)' } }, '…还有 ' + ((diag.files || []).length - 8) + ' 个没列出来')
+                    : null),
+                  h('div', { style: { marginTop: '6px' } }, '目录树（~/.dsh）：'),
+                  h('div', { style: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '11px', color: 'var(--t3)', lineHeight: 1.6 } },
+                    (diag.tree || []).slice(0, 16).map((t, i2) => h('div', { key: 't' + i2 },
+                      t.dir ? t.path : (t.path + '   ' + (t.size || 0) + 'B')))),
+                  ((diag.problems && diag.problems.length)
                     ? h('div', { style: { marginTop: '8px', color: 'var(--amber, #d9a03f)' } },
                       h('div', { style: { fontWeight: 600 } }, '卡在哪：'),
-                      diag.problems.map((t, i) => h('div', { key: i }, '· ' + t)))
-                    : null,
+                      diag.problems.slice(0, 6).map((t, i2) => h('div', { key: i2 }, '· ' + t)))
+                    : null),
                   h('div', { style: { marginTop: '8px', color: 'var(--t3)' } }, '这张体检单截图发给作者，就能定位；不用重装、重启也没用'))
-                : h('div', { style: { fontSize: '12px' } }, '检查 DSH 的 cordis.patch.yml 里 providers 有没有配 apiKeyEnv，以及 ~/.dsh/.credentials.yaml 里有没有对应的 key。')))
+                : h('div', { style: { fontSize: '12px' } }, '检查 DSH 的 cordis.patch.yml 里 providers 有没有配 apiKeyEnv。')))
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' },
             h('span', { className: 't' }, '模型与密钥'),

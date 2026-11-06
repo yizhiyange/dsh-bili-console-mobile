@@ -1467,8 +1467,74 @@ export function apply(ctx, _config) {
         return sendJson(res, 200, { ok: saved.length > 0, saved, skipped, items: listAssets(home) })
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
     }
-    if (req.method === 'GET' && path === '/assets') {
-      return sendJson(res, 200, { ok: true, items: listAssets(home) })
+    // ── 流式上传（2026-11-06）──────────────────────────────────────
+    // 为什么不复用上面的 /assets/upload：那条走 base64 JSON，整张图要先变字符串，
+    // 100MB 的图在手机上要占 300MB+ 内存，直接 OOM 闪退（比"传失败"更糟）。
+    // 这条让「请求体就是文件本身」，边收边写磁盘，内存恒定 —— 512MB 也只占几 MB。
+    if (req.method === 'POST' && path === '/assets/upload-raw') {
+      const RAW_MAX = 512 * 1024 * 1024
+      let sent = false
+      const reply = (obj) => { if (sent) return; sent = true; try { sendJson(res, 200, obj) } catch { /* 连接可能已断 */ } }
+
+      const rawName = String(u.searchParams.get('name') || 'file').replace(/[/\\]/g, '_').slice(-80)
+      const mime = String(u.searchParams.get('mime') || '').toLowerCase()
+      const MIME_EXT = {
+        'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
+        'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
+        'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a', 'audio/aac': '.aac', 'audio/ogg': '.ogg',
+        'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/x-matroska': '.mkv', 'video/webm': '.webm',
+      }
+      let ext = ((rawName.match(/\.[a-z0-9]+$/i) || [''])[0] || '').toLowerCase()
+      let finalName = rawName
+      if (!ext && MIME_EXT[mime]) { ext = MIME_EXT[mime]; finalName = rawName + ext }
+      if (!/^\.(png|jpe?g|webp|gif|mp3|wav|m4a|aac|ogg|mp4|mov|mkv|webm)$/.test(ext)) {
+        return reply({ ok: false, error: '类型不支持：' + (mime || '既没有扩展名也不认识 MIME') })
+      }
+
+      const dir = join(home, 'assets')
+      try { if (!existsSync(dir)) mkdirSync(dir, { recursive: true }) } catch { /* noop */ }
+      let out = finalName
+      let n = 1
+      while (existsSync(join(dir, out))) out = finalName.replace(ext, '') + '_' + (n++) + ext
+
+      const tmp = join(dir, '.uploading-' + Date.now() + ext)
+      const ws = createWriteStream(tmp)
+      let size = 0
+      let aborted = false
+      const clean = () => { try { ws.destroy() } catch { /* noop */ } ; try { unlinkSync(tmp) } catch { /* noop */ } }
+
+      req.on('data', (c) => {
+        if (aborted) return
+        size += c.length
+        if (size > RAW_MAX) {
+          aborted = true
+          clean()
+          try { req.destroy() } catch { /* noop */ }
+          return reply({ ok: false, error: '超过 512MB 上限' })
+        }
+        if (!ws.write(c)) { try { req.pause() } catch { /* noop */ } }
+      })
+      ws.on('drain', () => { try { req.resume() } catch { /* noop */ } })
+      req.on('end', () => { if (!aborted) { try { ws.end() } catch { /* noop */ } } })
+      req.on('error', () => { if (aborted) return; aborted = true; clean(); reply({ ok: false, error: '上传中断' }) })
+      ws.on('error', () => { if (aborted) return; aborted = true; clean(); reply({ ok: false, error: '写文件失败（可能存储空间不够）' }) })
+      ws.on('finish', () => {
+        if (aborted) return
+        try {
+          renameSync(tmp, join(dir, out))
+          const items = listAssets(home).map((x) => ({ file: x.file, note: x.note || x.hint || '', kind: x.kind }))
+          saveAssets(home, items)
+          logLine(home, '上传素材 ' + out + '（' + (size / 1048576).toFixed(1) + 'MB）')
+          reply({ ok: true, saved: [out], skipped: [], items: listAssets(home) })
+        } catch (e) {
+          clean()
+          reply({ ok: false, error: String((e && e.message) || e) })
+        }
+      })
+      return
+    }
+    if (req.method === 'GET' && path === '/assets') {
+      return sendJson(res, 200, { ok: true, items: listAssets(home) })
     }
     if (req.method === 'POST' && path === '/assets') {
       const b = await readBody(req)
