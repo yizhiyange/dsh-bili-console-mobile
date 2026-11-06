@@ -252,7 +252,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="settings">设置</button>
       <div class="side-spacer"></div>
       <div class="mode-card">
-        <b>当前控制：网页</b>
+        <b id="mode-title">当前控制：网页</b>
         <button class="link" id="to-dsh">DSH 里也有同一份 →</button>
       </div>
     </aside>
@@ -485,6 +485,7 @@ img.avatar{border:1px solid var(--line);}
 
   function renderModels() {
     var c = cfg(), chain = st().chain || {}, ep = chain.endpoints || [], presets = chain.presets || [];
+    var standalone = !!st().standalone;
     var inChain = {}; ep.forEach(function (e) { inChain[e.id] = 1; });
 
     var lv = ep.length ? ep.map(function (e, i) {
@@ -853,7 +854,19 @@ img.avatar{border:1px solid var(--line);}
     chain: renderChain, safety: renderSafety, settings: renderSettings, publish: renderPublish
   };
 
+  function syncStandaloneChrome() {
+    var sb = !!(st() && st().standalone);
+    var mt = document.getElementById('mode-title');
+    var td = document.getElementById('to-dsh');
+    if (mt) mt.textContent = sb ? '当前控制：独立版' : '当前控制：网页';
+    if (td) {
+      td.textContent = sb ? '数据已和 DSH 分开' : 'DSH 里也有同一份 →';
+      td.style.opacity = sb ? '0.55' : '';
+    }
+  }
+
   function paint() {
+    syncStandaloneChrome();
     renderTop();
     var fn = RENDER[S.page] || renderOverview;
     var el = $('#page-' + S.page);
@@ -1150,7 +1163,10 @@ img.avatar{border:1px solid var(--line);}
   });
 
   $('#q').addEventListener('input', function (e) { S.q = e.target.value.trim(); if (S.page === 'logs') paint(); });
-  $('#to-dsh').addEventListener('click', function () { toast('在 DSH 的「设置 → 刷视频」里也是这一份，功能一样'); });
+  $('#to-dsh').addEventListener('click', function () {
+    if (st() && st().standalone) { toast('独立版的数据在 ' + (st().home || '自己的目录') + '，不读也不写 DSH'); return; }
+    toast('在 DSH 的「设置 → 刷视频」里也是这一份，功能一样');
+  });
 
   function startLogin() {
     $('#login').classList.add('show');

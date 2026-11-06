@@ -831,6 +831,11 @@ window.__ModuleLoader__.load({
           if (!chosen.length) return
           toast_('正在上传 ' + chosen.length + ' 个…')
           const files = []
+          const MIME_EXT = {
+            'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
+            'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
+            'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a', 'audio/aac': '.aac', 'audio/ogg': '.ogg',
+          }
           for (const f of chosen.slice(0, 20)) {
             const data = await new Promise((resolve) => {
               const fr = new FileReader()
@@ -838,13 +843,19 @@ window.__ModuleLoader__.load({
               fr.onerror = () => resolve('')
               fr.readAsDataURL(f)
             })
-            if (data) files.push({ name: f.name || ('素材' + files.length), data })
+            if (!data) continue
+            // 安卓相册/文件选择器经常只给 MIME 不给扩展名（name 可能是一串数字），
+            // 这里补上扩展名，否则后端会当成"类型不支持"直接丢掉（2026-11-06 修）
+            const nm = String(f.name || ('素材' + files.length))
+            const hasExt = /\.[a-z0-9]+$/i.test(nm)
+            files.push({ name: hasExt ? nm : (nm + (MIME_EXT[f.type] || '')), data })
           }
           if (!files.length) return toast_('读不出文件内容')
           const r = await jpost('/assets/upload', { files })
           if (!r || !r.ok) return toast_('上传失败：' + ((r && r.error) || '未知原因'))
           const n = (r.saved || []).length
-          toast_('已加进素材库 ' + n + ' 个' + ((r.skipped || []).length ? ('，跳过 ' + r.skipped.length + ' 个') : ''))
+          const sk = r.skipped || []
+          toast_('已加进素材库 ' + n + ' 个' + (sk.length ? ('；没成功 ' + sk.length + ' 个：' + String(sk[0]).slice(0, 40)) : ''))
           renderAssetsInto(r.items || [])
         } catch (e) { toast_('上传失败：' + String(e?.message ?? e)) }
       }

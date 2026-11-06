@@ -235,6 +235,10 @@ async function openWithSystem(p) {
   const tries = [
     ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "file://${safe}" -t "video/*" 2>&1`]],
     ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "file://${safe}" 2>&1`]],
+    // 优先直接落到「下载/dsh-bili-console」这一层：DocumentsUI 的 document URI，
+    // 安卓 5+ 都能打开，不需要 root、也不需要无线调试（2026-11-06 加）
+    ['/system/bin/sh', ['-c', 'am start -a android.intent.action.VIEW -d "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fdsh-bili-console" 2>&1']],
+    // 退一步：打开「内部存储」根目录，用户自己点进 Download
     ['/system/bin/sh', ['-c', `am start -a android.intent.action.VIEW -d "content://com.android.externalstorage.documents/root/primary" 2>&1`]],
   ]
   for (const [bin, args] of tries) {
@@ -340,14 +344,38 @@ function sendHtml(res, html) {
 }
 
 
-function readBody(req) {
+/**
+ * 读请求体（JSON）。
+ * limit 默认 1MB —— 普通设置接口够用了。
+ * ⚠️ 2026-11-06 修：素材上传以前也走这个默认值，而手机一张 PNG 转 base64 就 2~4MB，
+ *    一超标就 req.destroy()，**前端什么都收不到**，表现就是"选了图但没反应"。
+ *    现在上传接口单独放宽，并且用 Buffer 拼装（原来 buf += c 对大包很慢）。
+ */
+function readBody(req, limit = 1e6) {
   return new Promise((resolve) => {
-    let buf = ''
-    req.on('data', (c) => { buf += c; if (buf.length > 1e6) req.destroy() })
-    req.on('end', () => {
-      try { resolve(buf ? JSON.parse(buf) : {}) } catch { resolve({}) }
+    const chunks = []
+    let size = 0
+    let done = false
+    req.on('data', (c) => {
+      if (done) return
+      size += c.length
+      if (size > limit) {
+        done = true
+        resolve({})
+        try { req.destroy() } catch { /* noop */ }
+        return
+      }
+      chunks.push(c)
     })
-    req.on('error', () => resolve({}))
+    req.on('end', () => {
+      if (done) return
+      done = true
+      try {
+        const text = Buffer.concat(chunks).toString('utf8')
+        resolve(text ? JSON.parse(text) : {})
+      } catch { resolve({}) }
+    })
+    req.on('error', () => { if (!done) { done = true; resolve({}) } })
   })
 }
 
@@ -635,6 +663,8 @@ export function apply(ctx, _config) {
     const vst = venvStatus(home)
     return {
       ok: true, home, now: new Date().toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }),
+      // 独立版（standalone.mjs 起的）为 true：前端据此隐藏「从 DSH 提取模型」那套 UI
+      standalone: !!process.env.BILI_STANDALONE,
       version: VERSION || '0.0.0',
       pkg: PKG_NAME || '',
       update: snapshot(VERSION || '0.0.0'),
@@ -661,7 +691,10 @@ export function apply(ctx, _config) {
         hostPresets: hostModels.length,
         presets: listHostProviders(),   // 只含有密钥的 provider；每个 provider 一串模型
         // 一个都没提取到时才做体检（正常情况零开销），前端据此显示具体卡在哪一步
-        dshDiag: hostModels.length ? null : diagnoseDsh(home),
+        // ⚠️ 不能传 home：home 是插件家目录（~/.dsh/bili-console），
+        //    DSH 的 profile 在 ~/.dsh/profiles —— 传错就会去 bili-console/profiles 找，永远找不到。
+        //    这里必须用 dshcfg 自己的默认值 dshHome()。（2026-11-06 用户截图暴露的 bug）
+        dshDiag: hostModels.length ? null : diagnoseDsh(),
       },
       memory: { mode: (cfgNow.contextMode === 'thread' ? 'thread' : 'isolated'), ...threadStats(home) },
       posted: postedStats(home),
@@ -1383,19 +1416,34 @@ export function apply(ctx, _config) {
     // 这里直接落进插件素材库。**彻底绕开文件管理器/proot 路径**，用户不用知道任何目录。
     if (req.method === 'POST' && path === '/assets/upload') {
       try {
-        const b = await readBody(req)
+        // 素材是 base64 塞 JSON 传的，手机一张图就 2~4MB，1MB 的默认上限根本不够。
+        // 这里单独放宽到 32MB（约等于 24MB 原图，够一次传十几张）。
+        const b = await readBody(req, 32 * 1024 * 1024)
         const list = Array.isArray(b.files) ? b.files : []
-        if (!list.length) return sendJson(res, 200, { ok: false, error: '没收到文件' })
+        if (!list.length) return sendJson(res, 200, { ok: false, error: '没收到文件（可能太大被中断了，一次少选几张）' })
         const dir = join(home, 'assets')
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
         const saved = []
         const skipped = []
+        const MIME_EXT = {
+          'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif',
+          'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
+          'audio/mp4': '.m4a', 'audio/x-m4a': '.m4a', 'audio/aac': '.aac', 'audio/ogg': '.ogg',
+        }
         for (const f of list.slice(0, 20)) {
           try {
-            const name0 = String(f.name || 'file').replace(/[/\\]/g, '_').slice(-80)
-            const ext = (name0.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase()
-            if (!/^\.(png|jpe?g|webp|gif|mp3|wav|m4a|aac|ogg)$/.test(ext)) { skipped.push(name0 + '（类型不支持）'); continue }
+            const raw0 = String(f.name || 'file').replace(/[/\\]/g, '_').slice(-80)
+            // 安卓相册选出来的文件经常没有扩展名（content:// 只给 MIME 类型），
+            // 以前这里直接判"类型不支持"就丢了 —— 现在先从 data URL 头把真实类型捞出来。
             const raw = String(f.data || '')
+            const mime = ((/^data:([\w/+.-]+);base64,/i.exec(raw) || [])[1] || '').toLowerCase()
+            let ext = ((raw0.match(/\.[a-z0-9]+$/i) || [''])[0] || '').toLowerCase()
+            let name0 = raw0
+            if (!ext && MIME_EXT[mime]) { ext = MIME_EXT[mime]; name0 = raw0 + ext }
+            if (!/^\.(png|jpe?g|webp|gif|mp3|wav|m4a|aac|ogg)$/.test(ext)) {
+              skipped.push(raw0 + '（类型不支持' + (mime ? '：' + mime : '，且没有扩展名') + '）')
+              continue
+            }
             const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
             const buf = Buffer.from(b64, 'base64')
             if (!buf.length) { skipped.push(name0 + '（空文件）'); continue }
