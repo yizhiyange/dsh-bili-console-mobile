@@ -2150,6 +2150,7 @@ window.__ModuleLoader__.load({
 
       const renderModels = () => {
         const presets = (st.chain && st.chain.presets) || []
+        const diag = (st.chain && st.chain.dshDiag) || null
         const inChain = new Set((chainDraft || []).map((e) => e.id))
         const presetCard = Card({ title: 'DSH 里的模型（自动提取）', sub: '只列有密钥的 · 点一下进/出降级链' },
           presets.length
@@ -2188,7 +2189,24 @@ window.__ModuleLoader__.load({
                   rest > 0 ? h('button', { 'data-bd-mchip': '', onClick: () => setProvOpen((o) => ({ ...o, [g.provider]: true })) }, '还有 ' + rest + ' 个 ▾') : null,
                   open && g.models.length > 18 ? h('button', { 'data-bd-mchip': '', onClick: () => setProvOpen((o) => ({ ...o, [g.provider]: false })) }, '收起 ▴') : null))
             })
-            : h('div', { 'data-bd-empty': '' }, '没从 DSH 里提取到带密钥的模型。检查 DSH 的 cordis.patch.yml 里 providers 有没有配 apiKeyEnv，以及 ~/.dsh/.credentials.yaml 里有没有对应的 key。'))
+            : h('div', { 'data-bd-callout': '', style: { lineHeight: 1.8 } },
+              h('div', { style: { fontWeight: 600, marginBottom: '6px' } }, '没从 DSH 里提取到带密钥的模型——下面是体检结果'),
+              diag
+                ? h('div', { style: { fontSize: '12px' } },
+                  h('div', null, '配置目录：' + (diag.home || '?') + (diag.homeExists ? ' ✓ 存在' : ' ✗ 不存在')),
+                  h('div', null, '找到 profile：' + (diag.profiles && diag.profiles.length
+                    ? diag.profiles.map((p) => p.name + (p.exists ? '（' + p.bytes + ' 字）' : '（无配置）')).join('、')
+                    : '一个都没有')),
+                  h('div', null, '密钥文件：' + (diag.refs && diag.refs.length
+                    ? diag.refs.length + ' 个（' + diag.refs.join('、') + '）'
+                    : '0 个（' + (diag.home || '~/.dsh') + '/.credentials.yaml 没读到）')),
+                  (diag.problems && diag.problems.length)
+                    ? h('div', { style: { marginTop: '8px', color: 'var(--amber, #d9a03f)' } },
+                      h('div', { style: { fontWeight: 600 } }, '卡在哪：'),
+                      diag.problems.map((t, i) => h('div', { key: i }, '· ' + t)))
+                    : null,
+                  h('div', { style: { marginTop: '8px', color: 'var(--t3)' } }, '这张体检单截图发给作者，就能定位；不用重装、重启也没用'))
+                : h('div', { style: { fontSize: '12px' } }, '检查 DSH 的 cordis.patch.yml 里 providers 有没有配 apiKeyEnv，以及 ~/.dsh/.credentials.yaml 里有没有对应的 key。')))
         return h('div', { 'data-bd-pagewrap': '' },
           h('div', { 'data-bd-pagetitle': '' },
             h('span', { className: 't' }, '模型与密钥'),

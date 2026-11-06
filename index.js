@@ -34,7 +34,7 @@ import { resolvePersona } from './lib/persona.mjs'
 import { Cooldown, decide } from './lib/guardian.mjs'
 import { parseLine, levelOf, translate, tailLines, readTailText, trimDutyLog } from './lib/logread.mjs'
 import { buildEndpoints } from './lib/chain.mjs'
-import { extractDshModels, listDshProviders } from './lib/dshcfg.mjs'
+import { extractDshModels, listDshProviders, diagnoseDsh } from './lib/dshcfg.mjs'
 import { threadStats, clearThreads } from './lib/memory.mjs'
 import { retractLast, listPosts, postedStats, clearPosts, dropPost } from './lib/retract.mjs'
 import { addPublished, listPublished, markRetracted } from './lib/publishlog.mjs'
@@ -626,7 +626,8 @@ export function apply(ctx, _config) {
     const win = { noon: inWindow({ noon: true }, new Date()) === 'noon', night: inWindow({ night: true }, new Date()) === 'night' }
     const login = loginStatus(home)
     const safeMode = !cfgNow.autoComment && (cfgNow.dmMode === 'off')
-    const chain = buildEndpoints(cfgNow, extractHostModels())
+    const hostModels = extractHostModels()
+    const chain = buildEndpoints(cfgNow, hostModels)
     // 环境状态：/state 也带给网页控制台（之前只有 /status 有，网页端永远显示「待安装」）。
     // 有 .pyready.json 存档时这一步 2ms 返回，不会拖慢 2 秒一次的轮询（2026-10-31 修）
     const vst = venvStatus(home)
@@ -655,8 +656,10 @@ export function apply(ctx, _config) {
       activity: recentActivity(home, 60),
       chain: {
         endpoints: chain.map((e, i) => ({ index: i, id: e.id, label: e.label, source: e.source, model: e.model })),
-        hostPresets: extractHostModels().length,
-        presets: listHostProviders(),   // 只含有密钥的 provider；每个 provider 一串模型
+        hostPresets: hostModels.length,
+        presets: listHostProviders(),
+        // 一个都没提取到时才做体检（正常情况零开销），前端据此显示具体卡在哪一步
+        dshDiag: hostModels.length ? null : diagnoseDsh(home),   // 只含有密钥的 provider；每个 provider 一串模型
       },
       memory: { mode: (cfgNow.contextMode === 'thread' ? 'thread' : 'isolated'), ...threadStats(home) },
       posted: postedStats(home),
