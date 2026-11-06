@@ -121,6 +121,8 @@ export const Config = !z ? undefined : z.object({
   videoModelSource: z.string().default('dsh').extra('volatile', true),
   useAssets: z.boolean().default(false).extra('volatile', true),
   lowPower: z.boolean().default(false).extra('volatile', true),
+  // 轻量界面：auto=按设备猜（默认）｜on=强制轻量｜off=强制关掉
+  liteUI: z.string().default('auto').extra('volatile', true),
   replyToComments: z.boolean().default(false).extra('volatile', true),
   replyPerRound: z.natural().default(1).extra('volatile', true),
   transcribe: z.boolean().default(false).extra('volatile', true),
@@ -380,7 +382,7 @@ const ASSIST_KEYS = new Set([
   'keywords', 'videoVoice', 'videoVoiceName', 'videoVoiceRate', 'videoVoicePitch', 'videoLayout',
   'videoCogVideo', 'videoCogVideoMode', 'videoImageEnabled', 'thinkLevel', 'mentionName', 'mentionMode',
   'roundIntervalMinutes', 'scanPerRound', 'scheduleMode', 'activeStart', 'activeEnd', 'personaMaxLen',
-  'lowPower', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
+  'lowPower', 'liteUI', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
 ])
 
 async function runAssistantTool(home, tool, args, ctx = {}) {
@@ -657,9 +659,9 @@ export function apply(ctx, _config) {
       chain: {
         endpoints: chain.map((e, i) => ({ index: i, id: e.id, label: e.label, source: e.source, model: e.model })),
         hostPresets: hostModels.length,
-        presets: listHostProviders(),
+        presets: listHostProviders(),   // 只含有密钥的 provider；每个 provider 一串模型
         // 一个都没提取到时才做体检（正常情况零开销），前端据此显示具体卡在哪一步
-        dshDiag: hostModels.length ? null : diagnoseDsh(home),   // 只含有密钥的 provider；每个 provider 一串模型
+        dshDiag: hostModels.length ? null : diagnoseDsh(home),
       },
       memory: { mode: (cfgNow.contextMode === 'thread' ? 'thread' : 'isolated'), ...threadStats(home) },
       posted: postedStats(home),

@@ -224,6 +224,16 @@ window.__ModuleLoader__.load({
     [data-bd-page].narrow [data-bd-setrow]{flex-wrap:wrap;row-gap:8px;}
     [data-bd-page].narrow [data-bd-setrow]>[data-bd-txt]{flex:1 1 100%;}
     [data-bd-page].narrow [data-bd-setrow]>*{min-width:0;max-width:100%;}
+
+    /* ── 低配/触摸设备（.lite）：只干三件事，专治滚动掉帧 ──────────────────
+       ① 取消内嵌滚动区：手机上手指一划，浏览器要先算「滚里面还是滚外面」，
+          低端 GPU 上这一步就掉帧。全并成一个滚动上下文最顺。
+       ② 停掉那个无限循环的 box-shadow 动画（pulse）：它每帧都要重绘，
+          而 box-shadow 无法合成到 GPU 层，低配设备会一直卡。
+       ③ 侧栏 sticky 在滚动时每帧重算位置，触摸设备上直接改成普通布局。 */
+    .lite [data-bd-logbox],.lite [data-bd-feed]{max-height:none !important;overflow:visible !important;}
+    .lite [data-bd-sidebar]{position:static !important;top:auto !important;}
+    .lite [data-bd-spill].run .sd{animation:none !important;box-shadow:0 0 0 3px rgba(26,115,232,.35) !important;}
     [data-bd-page].narrow [data-bd-setrow]>[data-bd-input],
     [data-bd-page].narrow [data-bd-setrow]>select,
     [data-bd-page].narrow [data-bd-setrow]>[data-bd-numin]{flex:1 1 100%;}
@@ -252,6 +262,8 @@ window.__ModuleLoader__.load({
     [data-bd-chainlist]{display:flex;flex-direction:column;gap:8px;}
     [data-bd-setrow]{display:flex;align-items:center;gap:12px;padding:12px 0;}
     [data-bd-setrow]+[data-bd-setrow]{border-top:1px solid var(--line);}
+    [data-bd-seg]{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:none;}
+    [data-bd-seg] [data-bd-btn]{min-width:62px;justify-content:center;}
     [data-bd-setrow] .txt{flex:1;min-width:0;} [data-bd-setrow] .lb{font-size:13px;margin-bottom:2px;} [data-bd-setrow] .ds{font-size:11px;color:var(--t2);line-height:1.6;}
     [data-bd-callout]{border-left:3px solid var(--blue);background:var(--canvas);border-radius:0 6px 6px 0;padding:12px 16px;font-size:12px;line-height:1.9;}
     [data-bd-charter]{font-size:12.5px;color:var(--t2);line-height:2;padding-left:18px;}
@@ -419,6 +431,17 @@ window.__ModuleLoader__.load({
         h('div', { 'data-bd-lb': '' }, label),
         note ? h('div', { 'data-bd-ds': '' }, note) : null),
       h(Switch, { on, onChange, disabled }))
+
+    /** 三态分段选择：适合「自动 / 强制开 / 强制关」这种选项——开关表达不了"自动"，下拉又太重 */
+    const SegRow = ({ label, note, value, options, onChange }) => h('div', { 'data-bd-setrow': '' },
+      h('div', { 'data-bd-txt': '' },
+        h('div', { 'data-bd-lb': '' }, label),
+        note ? h('div', { 'data-bd-ds': '' }, note) : null),
+      h('div', { 'data-bd-seg': '' }, (options || []).map((o) => h('button', {
+        key: o.v, 'data-bd-btn': '',
+        className: value === o.v ? 'primary sm' : 'ghost sm',
+        onClick: () => onChange(o.v),
+      }, o.t))))
 
     // 注意：下面这些组件都是「直接函数调用」用的（Card({...}, a, b)），
     // 子元素落在第 2 个起的位置参数里，**不在 props.children** —— 必须用 ...kids 收，
@@ -3041,6 +3064,13 @@ window.__ModuleLoader__.load({
                 h('option', { value: '' }, '自动'),
                 (((st.chain && st.chain.endpoints) || []).map((e) => h('option', { value: e.id, key: e.id }, e.label || e.model || e.id))))),
             ToggleRow({ label: '省电模式（针对手机）', note: '开了之后：①手机空闲时 12 秒刷新一次、任务跑着 3 秒；内容没变化就不重绘整个面板（省 CPU）；锁屏/切 App 完全不发请求；②日志只读末尾一段、超过 2MB 自动裁到最后 4000 行；③系统可用内存低于 12% 时自动释放；④私信监察间隔放宽到 3 倍；⑤渲染限制 ffmpeg 单线程 + ultrafast（文件大 10~20%，画质肉眼看不出）。想边打游戏边跑就开这个', on: !!cfg.lowPower, onChange: (v) => saveOne('lowPower', v) })),
+            SegRow({
+              label: '轻量界面（治滑动掉帧）',
+              note: '自动：手机/平板才启用（按浏览器 UA 判断）。强制开：任何设备都合并成一个滚动、关掉循环动画——滚动更顺，但页面会变长。强制关：保留原来的多滚动区布局。设备被认错时手动改这里就行',
+              value: cfg.liteUI || 'auto',
+              options: [{ v: 'auto', t: '自动' }, { v: 'on', t: '强制开' }, { v: 'off', t: '强制关' }],
+              onChange: (v) => saveOne('liteUI', v),
+            }),
             Card({ title: '内存（运行内存，不是存储空间）', sub: '注意：这里显示的是宿主进程总量（DSH 本体 + 本插件），不是插件单独占的' },
               h('div', { 'data-bd-meminfo': '', style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.9 } }, '读取中…'),
               h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
@@ -3154,12 +3184,25 @@ window.__ModuleLoader__.load({
 
       // 改了配置就在右下角浮出「保存配置」——不用滚回页面底部找保存按钮
       const unsaved = Object.keys(dirty || {}).filter((k) => dirty[k]).length
+      // 低配模式：触摸设备（手机/平板）或用户手动开了省电模式时，换成「单滚动上下文」的轻量布局。
+      // 只影响界面渲染，不改任何功能；电脑端 UA 不含 mobile 且没开省电，class 不会加上，行为一个字节没变。
+      const isLite = (() => {
+        try {
+          const mode = (st && st.settings && st.settings.liteUI) || 'auto'
+          if (mode === 'on') return true
+          if (mode === 'off') return false
+          // auto：手机/平板 UA 命中才启用；另外省电模式也强制启用（它本来就是给低配设备的）
+          if (/android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || '')) return true
+          return !!(st && st.settings && st.settings.lowPower)
+        } catch { return false }
+      })()
+      const pageCls = [narrow ? 'narrow' : '', unsaved ? 'has-floatsave' : '', isLite ? 'lite' : ''].filter(Boolean).join(' ')
       const floatSave = unsaved ? h('div', { 'data-bd-floatsave': '' },
         h('span', { 'data-bd-ds': '', style: { fontSize: '12px' } }, '有 ' + unsaved + ' 项改动没保存'),
         h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: saveSettings }, '保存配置'),
         h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { setDirty({}); setPersona(null); setKws(null); setMentionDraft(null); setDmUidDraft(null); setFavDraft(null); toast_('已放弃改动，恢复成已保存的值') } }, '放弃')) : null
 
-      return h('div', { 'data-bd-page': '', ref: rootRef, className: (narrow ? 'narrow' : '') + (unsaved ? ' has-floatsave' : '') },
+      return h('div', { 'data-bd-page': '', ref: rootRef, className: pageCls },
         topbar,
         loginBar,
         banner,
