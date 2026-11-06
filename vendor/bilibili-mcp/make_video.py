@@ -482,9 +482,12 @@ def main():
                 audio_path = joined
                 tts_tmp = joined
                 # 每页停多久 = 这句配音的长度 + 一点点呼吸（0.35 秒），保证说得完再翻
-                card_durs = [max(1.6, d + 0.35) for d in seg_durs]
+                # 每页 = 这句配音 + 0.5 秒呼吸；短句别硬拉到 1.6 秒，
+                # 否则 0.8 秒的短句会让画面空等 0.8 秒（用户反馈过"图停着没声"）
+                card_durs = [max(1.2, d + 0.5) for d in seg_durs]
                 audio_dur = sum(card_durs)
-                log('配音逐页合成完成：' + ' / '.join('%.1f' % d for d in seg_durs) + ' 秒 → 画面按语音长度走')
+                log('配音逐页合成完成：' + ' / '.join('%.1f' % d for d in seg_durs)
+                    + ' 秒 → 画面按语音长度走（每页字数 ' + ' / '.join(str(len(t)) for t in texts) + '）')
             else:
                 log('配音拼接失败，退回整段模式')
                 ok_all = False
@@ -513,12 +516,20 @@ def main():
     if card_durs and len(card_durs) == len(cards):
         durs = card_durs
     else:
-        base_total = sum(max(1.0, float(c.get('seconds') or 4)) for c in cards)
+        # 兜底：配音是整段合成的，只能估每页该占多久。
+        # 2026-11-06 改：以前按 seconds 等比缩放 —— 可 seconds 是"计划时长"，
+        # 跟配音语速毫无关系，结果就是"声音已经说到下一页，画面还停在这页"。
+        # 现在按「这一页有多少字」分配：语速大致均匀，字数就是最好的权重。
+        def _w(card):
+            t = clean_text(str(card.get('title') or '') + '。' + '。'.join([str(x) for x in (card.get('lines') or [])]))
+            return max(6, len(t))
+        ws = [_w(c) for c in cards]
+        wsum = sum(ws) or 1
         if audio_dur > 0:
-            scale = max(1.0, audio_dur) / base_total
-            durs = [max(1.0, float(c.get('seconds') or 4) * scale) for c in cards]
+            durs = [max(1.2, audio_dur * w / wsum) for w in ws]
+            log('整段配音兜底：按字数分配画面 ' + ' / '.join('%.1f' % d for d in durs) + ' 秒')
         else:
-            durs = [max(1.0, float(c.get('seconds') or 4)) for c in cards]
+            durs = [max(1.2, float(c.get('seconds') or 4)) for c in cards]
 
     cmd = [ff, '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '%dx%d' % (W, H), '-r', str(fps), '-i', '-']
     if audio_path:
