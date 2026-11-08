@@ -249,6 +249,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="persona">人设</button>
       <button class="pill" data-page="chain">降级链</button>
       <button class="pill" data-page="safety">安全防护</button>
+      <button class="pill" data-page="duty">挂机</button>
       <button class="pill" data-page="publish">发布</button>
       <button class="pill" data-page="qq">QQ 接入</button>
       <button class="pill" data-page="settings">设置</button>
@@ -268,6 +269,7 @@ img.avatar{border:1px solid var(--line);}
       <section class="page" id="page-persona"></section>
       <section class="page" id="page-chain"></section>
       <section class="page" id="page-safety"></section>
+      <section class="page" id="page-duty"></section>
       <section class="page" id="page-publish"></section>
       <section class="page" id="page-qq"></section>
       <section class="page" id="page-settings"></section>
@@ -485,25 +487,8 @@ img.avatar{border:1px solid var(--line);}
       '<span class="tag green">挑中 ' + (rep.picked || 0) + ' 条</span>',
       repBody + (rep.exists ? '<div style="margin-top:10px"><button class="btn ghost sm" data-act="rep">展开全部 ' + (rep.picked || 0) + ' 条</button></div>' : ''));
 
-    /* 2026-11-09 补：挂机总开关+节奏卡（以前只有 DSH 内嵌版总览有，网页版一直没法关） */
-    var dutyOn = c.autoDutyOn !== false;
-    var modeSel = '<select id="duty-mode" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px">' +
-      [['any','全天 7×24'],['window','自定义时段'],['valley','只在官方谷时']].map(function (o) {
-        return '<option value="' + o[0] + '"' + ((c.scheduleMode || 'any') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
-      }).join('') + '</select>';
-    var dutyCard = card('自动模式（挂机值守）', '到点自己挑视频、看内容；「自动评论」关着时只挑不发，想真发去「安全防护」页开', dutyOn ? '<span class="tag green">开着</span>' : '<span class="tag">关着</span>',
-      toggleRow('自动值守总开关', '关掉后到点也不跑轮次；群里喊它「去刷一轮」和手动跑不受影响', dutyOn, 'autoDutyOn') +
-      (dutyOn
-        ? (setRow('跑的时段', '全天 / 自定义起止 / 只在官方谷时（夜间流量便宜）', modeSel) +
-           ((c.scheduleMode || 'any') === 'window'
-             ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">从 <input type="time" id="duty-start" value="' + esc(c.activeStart || '09:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"> 到 <input type="time" id="duty-end" value="' + esc(c.activeEnd || '23:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"></div>'
-             : '') +
-           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;align-items:center">每天上限 <input type="number" id="duty-perday" value="' + esc(String(c.perDay != null ? c.perDay : 6)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 条 · 两轮间隔 <input type="number" id="duty-gap" value="' + esc(String(c.roundIntervalMinutes != null ? c.roundIntervalMinutes : 5)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 分钟</div>' +
-           '<div class="note" style="margin-top:6px">QQ 桥的「自动刷见闻」也在这个总开关之下：开关关了，桥最多收收日志，不会自己开刷。</div>')
-        : '<div class="note" style="margin-top:6px">现在是纯手动模式：群里喊它、或上面的手动按钮，它才动。</div>'));
-
     return '<div class="row-flex">' + acctCard + progCard + '</div>' +
-      '<div class="row-flex">' + chainCard + safeCard + '</div>' + dutyCard + logCard + repCard;
+      '<div class="row-flex">' + chainCard + safeCard + '</div>' + logCard + repCard;
   }
 
   function renderModels() {
@@ -697,16 +682,6 @@ img.avatar{border:1px solid var(--line);}
       '<div class="inputbox" style="margin-top:10px"><input id="newkw" placeholder="+ 输入后回车添加" autocomplete="off"></div>' +
       '<div class="note" style="margin:10px 0 0">AI 拿这些词去 B站 搜视频；没填就用默认几组。</div>');
 
-    var comment = card('评论与互动', '', '',
-      toggleRow('自动评论并 @', '开着才会真发评论；关了就只挑不发，不打扰任何人', !!c.autoComment, 'autoComment') +
-      setRow('@ 谁', '评论结尾 @ 这个人', inputHTML('mentionName', drafting.mentionName != null ? drafting.mentionName : (c.mentionName || ''), '@某人')) +
-      setRow('每轮最多评论', '一轮里最多发几条', stepperHTML('commentPerRound', c.commentPerRound || 0, '条')) +
-      toggleRow('点赞（值得看）', '评级「值得看」时顺手点个赞', !!c.autoLike, 'autoLike') +
-      toggleRow('投币（值得看）', '会花自己的币，每日有上限', !!c.autoCoin, 'autoCoin') +
-      setRow('每天最多投几个币', '防止一口气花光', stepperHTML('coinPerDay', c.coinPerDay || 0, '个')) +
-      toggleRow('回复评论', '别人回复你的评论时，它接一句', !!c.replyToComments, 'replyToComments') +
-      setRow('每轮回复几条', '回评论的轮次上限', stepperHTML('replyPerRound', c.replyPerRound || 0, '条')));
-
     var sourceCard = card('视频从哪来', '固定关键词会一直捞同一个池子，推荐流是活水', '',
       toggleRow('首页个性化推荐流', 'B站按你这个账号的口味实时推的，最新最相关', c.useHomeFeed !== false, 'useHomeFeed') +
       toggleRow('关键词搜索', '用上面填的关键词去搜；关键词也会慢慢培养账号的推荐口味', c.useKeywordSearch !== false, 'useKeywordSearch') +
@@ -816,7 +791,7 @@ img.avatar{border:1px solid var(--line);}
 
     var GROUPS = {
       find: kwCard + sourceCard + pick,
-      settings: comment + dm + rep + visionCard + memCard,
+      settings: dm + rep + visionCard + memCard,
       env: env + envJobCard + adv + updCard + dshCard
     };
     var META = {
@@ -833,7 +808,7 @@ img.avatar{border:1px solid var(--line);}
 
   // ============ 发布页（2026-10-31 新增：动态你自己写、视频点启动才发） ============
   function renderPublish() {
-    var login = S.login || {};
+    var login = lg();
     var me = S.me || {};
     var loginTag = login.loggedIn
       ? '<span class="tag green">已登录：' + esc(me.uname || '') + '</span>'
@@ -899,16 +874,6 @@ img.avatar{border:1px solid var(--line);}
     var vidTid = S.vidTid || '124';
 
     /* 自动发视频（2026-11-08）：开关默认关；全自动 / 先审后发；队列点确认才投 */
-    var autoCard = card('自动发视频', '生成完自动投稿；总开关默认关', cg.apOn ? '<span class="tag green">开着</span>' : '<span class="tag gray">关着</span>',
-      toggleRow('生成完的视频自动投稿', '开了以后：新生成的视频自动排进队列，按节奏投。模型、配音、声线用本页「视频生成设置」的配置', !!cg.apOn, 'apOn') +
-      (cg.apOn
-        ? setRow('投稿方式', '全自动=AI 写好直接投；先审后发=每条都要你点确认。B 站对批量投稿风控严，建议先审后发', selectHTML('apMode', cg.apMode === 'review' ? 'review' : 'auto', [['auto', '全自动（不用管）'], ['review', '先审后发（我确认）']])) +
-          setRow('两次投稿最少隔几小时', '防风控：B 站讨厌连投', '<input id="ap-gap" type="number" min="1" max="168" value="' + esc(String(Number(cg.apGapHours) || 6)) + '" style="width:110px">') +
-          setRow('每天最多发几条', '到上限就停，第二天再继续', '<input id="ap-day" type="number" min="1" max="10" value="' + esc(String(Number(cg.apPerDay) || 2)) + '" style="width:110px">') +
-          '<div class="note">小提醒：AI 生成的视频，发出去后去创作中心把「含 AI 生成内容」声明勾上（这版接口勾不了，得手动补一次）。</div>' +
-          '<div id="ap-queue" style="margin-top:8px"><div class="note">队列读取中…</div></div>'
-        : ''));
-
     var vidCard = card('投稿视频（点启动才发）', '<span class="tag blue">手动触发</span>',
       '<div class="sum-text" style="margin-bottom:10px">填好视频信息后，点"启动投稿"才会上传。B站自己会审核，你不用逐条审。</div>' +
       '<div style="display:grid;gap:8px">' +
@@ -934,7 +899,7 @@ img.avatar{border:1px solid var(--line);}
       '· 底层工具是 MIT 开源 bilibili-mcp 自带的，上层封装自己写，不抄代码。' +
       '</div>');
 
-    return genCard + genSetCard + autoCard + dynCard + vidCard + noteCard;
+    return genCard + genSetCard + dynCard + vidCard + noteCard;
   }
 
   /* ===== QQ 接入（遥控小门）独立页：2026-11-08 拆出来，找得到也管得住 ===== */
@@ -962,9 +927,44 @@ img.avatar{border:1px solid var(--line);}
     return body + secret + acts;
   }
 
+  /* ===== 挂机页（2026-11-09）：所有「自动」聚在这一页，总览/发布/设置不再散落 ===== */
+  function renderDuty() {
+    var c = cfg(), cg = cfg();
+    var dutyOn = c.autoDutyOn !== false;
+
+
+    var commentCard = card('评论与互动', '', '',
+      toggleRow('自动评论并 @', '开着才会真发评论；关了就只挑不发，不打扰任何人', !!c.autoComment, 'autoComment') +
+      setRow('@ 谁', '评论结尾 @ 这个人', inputHTML('mentionName', drafting.mentionName != null ? drafting.mentionName : (c.mentionName || ''), '@某人')) +
+      setRow('每轮最多评论', '一轮里最多发几条', stepperHTML('commentPerRound', c.commentPerRound || 0, '条')) +
+      toggleRow('点赞（值得看）', '评级「值得看」时顺手点个赞', !!c.autoLike, 'autoLike') +
+      toggleRow('投币（值得看）', '会花自己的币，每日有上限', !!c.autoCoin, 'autoCoin') +
+      setRow('每天最多投几个币', '防止一口气花光', stepperHTML('coinPerDay', c.coinPerDay || 0, '个')) +
+      toggleRow('回复评论', '别人回复你的评论时，它接一句', !!c.replyToComments, 'replyToComments') +
+      setRow('每轮回复几条', '回评论的轮次上限', stepperHTML('replyPerRound', c.replyPerRound || 0, '条')));
+
+
+    var autoBrushCard = card('自动刷见闻（QQ 机器人）', '开了它，机器人到点自己试跑一轮、攒见闻；关了只在群里喊它或手动跑时攒', '',
+      toggleRow('自动刷见闻', '群里聊到相关话题它能接上的「见闻」就是靠这个攒的', !!c.autoBrushOn, 'autoBrushOn') +
+      (c.autoBrushOn ? setRow('刷的间隔（分钟）', '多久自己试跑一轮，太短费 token', '<input id="brush-min" type="number" min="20" value="' + esc(String(Number(c.brushEveryMin) || 120)) + '" style="width:110px">') : '') +
+      '<div class="note" style="margin-top:6px">和「自动值守」共用同一份判重表：试跑看过的视频真发时不会重复挑；模型调用有轮次锁，也不会同时跑，不冲突。</div>');
+    var autoCard = card('自动发视频', '生成完自动投稿；总开关默认关', cg.apOn ? '<span class="tag green">开着</span>' : '<span class="tag gray">关着</span>',
+      toggleRow('生成完的视频自动投稿', '开了以后：新生成的视频自动排进队列，按节奏投。模型、配音、声线用本页「视频生成设置」的配置', !!cg.apOn, 'apOn') +
+      (cg.apOn
+        ? setRow('投稿方式', '全自动=AI 写好直接投；先审后发=每条都要你点确认。B 站对批量投稿风控严，建议先审后发', selectHTML('apMode', cg.apMode === 'review' ? 'review' : 'auto', [['auto', '全自动（不用管）'], ['review', '先审后发（我确认）']])) +
+          setRow('两次投稿最少隔几小时', '防风控：B 站讨厌连投', '<input id="ap-gap" type="number" min="1" max="168" value="' + esc(String(Number(cg.apGapHours) || 6)) + '" style="width:110px">') +
+          setRow('每天最多发几条', '到上限就停，第二天再继续', '<input id="ap-day" type="number" min="1" max="10" value="' + esc(String(Number(cg.apPerDay) || 2)) + '" style="width:110px">') +
+          '<div class="note">小提醒：AI 生成的视频，发出去后去创作中心把「含 AI 生成内容」声明勾上（这版接口勾不了，得手动补一次）。</div>' +
+          '<div id="ap-queue" style="margin-top:8px"><div class="note">队列读取中…</div></div>'
+        : ''));
+
+
+    return dutyCard + commentCard + autoBrushCard + autoCard;
+  }
+
   var RENDER = {
     overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
-    chain: renderChain, safety: renderSafety, publish: renderPublish, qq: renderQQ,
+    chain: renderChain, safety: renderSafety, duty: renderDuty, publish: renderPublish, qq: renderQQ,
     // 这三个页签共用同一批设置卡，renderSettings 内部按 S.page 各拿各的
     find: renderSettings, settings: renderSettings, env: renderSettings
   };
@@ -1139,7 +1139,7 @@ img.avatar{border:1px solid var(--line);}
     if (act === 'env-install') {
       var kind = t.dataset.kind || 'auto';
       toast('开始安装（' + kind + '），进度在下方卡片里');
-      return post('/env/install', { kind: kind })
+      return post('/env/install', { what: kind })
         .then(function (r) { if (!r || !r.ok) toast('没启动起来：' + ((r && r.error) || '未知')); setTimeout(refresh, 600); })
         .catch(function (e) { toast('请求失败：' + e.message); });
     }
