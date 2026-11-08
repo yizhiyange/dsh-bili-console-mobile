@@ -2990,10 +2990,73 @@ window.__ModuleLoader__.load({
         const openAssets = async () => {
           try { const r = await jpost('/assets/reveal', {}); if (r && r.dir) toast_('已打开：' + r.dir) } catch { toast_('打不开素材文件夹') }
         }
+        /** 自动发视频：拉队列画进 DOM（同 loadPosted 的直接 DOM 写法，不碰 hooks） */
+        const loadAutoQ = async () => {
+          const box = document.querySelector('[data-bd-apq]')
+          if (!box) return
+          try {
+            const r = await jget('/publish/auto')
+            const q = (r && r.queue) || []
+            box.innerHTML = ''
+            const tip = document.createElement('div')
+            tip.style.cssText = 'font-size:12px;color:var(--t3);margin-top:6px'
+            tip.textContent = q.length
+              ? ('今天已发 ' + ((r && r.todayCount) || 0) + '/' + ((r && r.perDay) || 2) + ' 条 · 队列 ' + q.length + ' 条')
+              : '队列是空的：生成一个视频后会自动排进来'
+            box.appendChild(tip)
+            const mkBtn = (txt, fn, danger) => {
+              const b = document.createElement('button')
+              b.className = 'ghost sm'; b.textContent = txt
+              if (danger) b.style.color = 'var(--red, #e35d6a)'
+              b.onclick = fn
+              return b
+            }
+            const refresh = () => { setTimeout(loadAutoQ, 300) }
+            for (const it of q.slice(0, 8)) {
+              const row = document.createElement('div')
+              row.style.cssText = 'padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:var(--surface)'
+              const t = document.createElement('div')
+              t.style.cssText = 'font-size:12px;color:var(--t1);line-height:1.6'
+              t.textContent = it.title + '（' + Math.round((it.size || 0) / 1048576) + ' MB）'
+              const meta = document.createElement('div')
+              const stTxt = { pending: '待处理', approved: '已确认，等间隔到点', working: '正在投…', done: '已发出 ' + (it.bvid || ''), failed: '失败：' + (it.error || ''), skipped: '已忽略' }[it.status] || it.status
+              meta.style.cssText = 'font-size:11px;color:var(--t3);margin-top:3px'
+              meta.textContent = stTxt
+              const bar = document.createElement('div')
+              bar.style.cssText = 'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap'
+              if (it.status === 'pending') {
+                if ((r && r.mode) === 'review') {
+                  bar.appendChild(mkBtn('✓ 确认投稿', async () => {
+                    await jpost('/publish/auto/approve', { id: it.id }); toast_('已确认，间隔到点自动投'); refresh()
+                  }))
+                } else {
+                  bar.appendChild(mkBtn('⚡ 立即投稿', async () => {
+                    toast_('正在投稿…')
+                    const rr = await jpost('/publish/auto/now', { id: it.id })
+                    toast_(rr && rr.ok ? '已投出去（' + (rr.bvid || '见创作中心') + '）' : ('失败：' + ((rr && rr.error) || '未知')))
+                    refresh()
+                  }))
+                }
+                bar.appendChild(mkBtn('忽略', async () => { await jpost('/publish/auto/approve', { id: it.id, act: 'remove' }); refresh() }, true))
+              }
+              if (it.status === 'approved') {
+                bar.appendChild(mkBtn('⚡ 不等了，现在投', async () => {
+                  toast_('正在投稿…')
+                  const rr = await jpost('/publish/auto/now', { id: it.id })
+                  toast_(rr && rr.ok ? '已投出去（' + (rr.bvid || '见创作中心') + '）' : ('失败：' + ((rr && rr.error) || '未知')))
+                  refresh()
+                }))
+              }
+              if (bar.children.length) row.appendChild(bar)
+              box.appendChild(row)
+            }
+          } catch { box.innerHTML = '<div style="font-size:12px;color:var(--t3)">队列读不到（后端没起来？）</div>' }
+        }
         setTimeout(() => { try { if (document.querySelector('[data-bd-runs]')) loadRuns() } catch { /* noop */ } }, 200)
         setTimeout(() => { try { if (document.querySelector('[data-bd-posted]')) loadPosted() } catch { /* noop */ } }, 260)
         setTimeout(() => { try { if (document.querySelector('[data-bd-published]')) loadPublished() } catch { /* noop */ } }, 320)
         setTimeout(() => { try { syncAutoFromCfg(); planAuto() } catch { /* noop */ } }, 380)
+        setTimeout(() => { try { if (document.querySelector('[data-bd-apq]')) loadAutoQ() } catch { /* noop */ } }, 440)
         // 卡片第一次渲染出来后自动拉一次列表（只拉一次，避免每次重渲染都打接口）
         setTimeout(() => {
           const box = document.querySelector('[data-bd-assets]')
@@ -3023,6 +3086,40 @@ window.__ModuleLoader__.load({
                 h('i', { 'data-bd-vgbar': '', style: { width: '0%' } })),
               h('span', { 'data-bd-ds': '', 'data-bd-vgtxt': '', style: { whiteSpace: 'nowrap' } }, '空闲')),
             h('div', { 'data-bd-vglog': '', style: { marginTop: '8px', fontSize: '11.5px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7, maxHeight: '120px', overflow: 'auto', background: 'var(--gray-bg)', borderRadius: '6px', padding: '8px 10px' } }, '')),
+          Card({
+            title: '自动发视频',
+            sub: '生成完自动投稿；总开关默认关，不开就永远不会自动发',
+            right: Tag({ c: cfg.apOn ? 'green' : 'gray', children: cfg.apOn ? '开着' : '关着' }),
+          },
+            ToggleRow({
+              label: '生成完的视频自动投稿',
+              note: '开了以后：每生成一条新视频就排进队列，按下面的节奏自动投。模型、配音、声线都用本页「视频生成设置」的配置，不用另配一套',
+              on: !!cfg.apOn, onChange: (v) => saveOne('apOn', v, '自动发视频'),
+            }),
+            cfg.apOn ? h('div', null,
+              h('div', { 'data-bd-setrow': '' },
+                h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '投稿方式'),
+                  h('div', { 'data-bd-ds': '' }, '全自动＝AI 写好文案直接投，你不用管；先审后发＝每条都要你在这张卡里点确认才投。B 站对短时间批量投稿风控很严，建议先审后发跑顺了再放开')),
+                Select({ value: cfg.apMode === 'review' ? 'review' : 'auto', onChange: (v) => saveOne('apMode', v, '投稿方式'), minWidth: 150 },
+                  h('option', { value: 'auto' }, '全自动（不用管）'),
+                  h('option', { value: 'review' }, '先审后发（我确认）'))),
+              h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', marginTop: '6px' } },
+                h('div', { 'data-bd-input': '', style: { flex: '1', minWidth: '130px' } },
+                  h('input', {
+                    type: 'number', min: 1, max: 168, defaultValue: Number(cfg.apGapHours) || 6,
+                    onBlur: (e) => saveOne('apGapHours', Math.max(1, Number(e.target.value) || 6), '最小间隔（小时）'),
+                  })),
+                h('div', { 'data-bd-input': '', style: { flex: '1', minWidth: '130px' } },
+                  h('input', {
+                    type: 'number', min: 1, max: 10, defaultValue: Number(cfg.apPerDay) || 2,
+                    onBlur: (e) => saveOne('apPerDay', Math.max(1, Number(e.target.value) || 2), '每日上限'),
+                  }))),
+              h('div', { style: { display: 'flex', gap: '14px', flexWrap: 'wrap', marginTop: '4px' } },
+                h('span', { 'data-bd-ds': '', style: { flex: '1', minWidth: '130px' } }, '↑ 两次投稿最少隔几小时'),
+                h('span', { 'data-bd-ds': '', style: { flex: '1', minWidth: '130px' } }, '↑ 每天最多发几条')),
+              h('div', { 'data-bd-note': '', style: { marginTop: '8px' } },
+                '小提醒：这是 AI 生成的视频，发出去后最好去创作中心把「含 AI 生成内容」的声明勾上（这版接口还勾不了，得手动补一次）。'),
+              h('div', { 'data-bd-apq': '', style: { marginTop: '8px' } })) : null),
           Card({ title: '视频生成设置', sub: '独立配置，和发评论的分开' },
             ToggleRow({ label: '配音（需联网）', note: '用微软 edge-tts 免费合成旁白（就是你要的「A 级 TTS」）；关掉就只有画面，渲染过程完全不联网（首次装 30MB 依赖还是要联网一次）', on: cfg.videoVoice !== false, onChange: (v) => saveOne('videoVoice', v) }),
             (cfg.videoVoice !== false) && h('details', {

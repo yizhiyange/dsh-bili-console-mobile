@@ -870,6 +870,17 @@ img.avatar{border:1px solid var(--line);}
     var vidCover = S.vidCover || '';
     var vidTid = S.vidTid || '124';
 
+    /* 自动发视频（2026-11-08）：开关默认关；全自动 / 先审后发；队列点确认才投 */
+    var autoCard = card('自动发视频', '生成完自动投稿；总开关默认关', cg.apOn ? '<span class="tag green">开着</span>' : '<span class="tag gray">关着</span>',
+      toggleRow('生成完的视频自动投稿', '开了以后：新生成的视频自动排进队列，按节奏投。模型、配音、声线用本页「视频生成设置」的配置', !!cg.apOn, 'apOn') +
+      (cg.apOn
+        ? setRow('投稿方式', '全自动=AI 写好直接投；先审后发=每条都要你点确认。B 站对批量投稿风控严，建议先审后发', selectHTML('apMode', cg.apMode === 'review' ? 'review' : 'auto', [['auto', '全自动（不用管）'], ['review', '先审后发（我确认）']])) +
+          setRow('两次投稿最少隔几小时', '防风控：B 站讨厌连投', '<input id="ap-gap" type="number" min="1" max="168" value="' + esc(String(Number(cg.apGapHours) || 6)) + '" style="width:110px">') +
+          setRow('每天最多发几条', '到上限就停，第二天再继续', '<input id="ap-day" type="number" min="1" max="10" value="' + esc(String(Number(cg.apPerDay) || 2)) + '" style="width:110px">') +
+          '<div class="note">小提醒：AI 生成的视频，发出去后去创作中心把「含 AI 生成内容」声明勾上（这版接口勾不了，得手动补一次）。</div>' +
+          '<div id="ap-queue" style="margin-top:8px"><div class="note">队列读取中…</div></div>'
+        : ''));
+
     var vidCard = card('投稿视频（点启动才发）', '<span class="tag blue">手动触发</span>',
       '<div class="sum-text" style="margin-bottom:10px">填好视频信息后，点"启动投稿"才会上传。B站自己会审核，你不用逐条审。</div>' +
       '<div style="display:grid;gap:8px">' +
@@ -895,7 +906,7 @@ img.avatar{border:1px solid var(--line);}
       '· 底层工具是 MIT 开源 bilibili-mcp 自带的，上层封装自己写，不抄代码。' +
       '</div>');
 
-    return genCard + genSetCard + dynCard + vidCard + noteCard;
+    return genCard + genSetCard + autoCard + dynCard + vidCard + noteCard;
   }
 
   var RENDER = {
@@ -927,6 +938,42 @@ img.avatar{border:1px solid var(--line);}
       var again = $('[data-draft="' + ae.dataset.draft + '"]');
       if (again) { again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) {} }
     }
+    // 自动发视频：数字输入 + 队列（拿到焦点时不重拉，免得把人正在输入的值冲掉）
+    var gap = $('#ap-gap'), day = $('#ap-day'), q = $('#ap-queue');
+    if (gap && !gap.dataset.bound) {
+      gap.dataset.bound = '1';
+      gap.addEventListener('change', function () { save('apGapHours', Math.max(1, Number(gap.value) || 6)); });
+    }
+    if (day && !day.dataset.bound) {
+      day.dataset.bound = '1';
+      day.addEventListener('change', function () { save('apPerDay', Math.max(1, Number(day.value) || 2)); });
+    }
+    if (q && !(document.activeElement && q.contains(document.activeElement))) renderAutoQueue();
+  }
+
+  function renderAutoQueue() {
+    var q = $('#ap-queue');
+    if (!q) return;
+    get('/publish/auto').then(function (r) {
+      if (!$('#ap-queue')) return;
+      var items = (r && r.queue) || [];
+      var html = '<div class="note" style="margin-top:4px">今天已发 ' + ((r && r.todayCount) || 0) + '/' + ((r && r.perDay) || 2) + ' 条 · 队列 ' + items.length + ' 条</div>';
+      if (!items.length) html += '<div class="note">队列是空的：生成一个视频后会自动排进来</div>';
+      var stTxt = { pending: '待处理', approved: '已确认，等间隔到点', working: '正在投…', done: '已发出 ' , failed: '失败', skipped: '已忽略' };
+      items.slice(0, 8).forEach(function (it) {
+        var btns = '';
+        if (it.status === 'pending' && r.mode === 'review') btns += '<button class="btn" data-act="ap-approve" data-id="' + it.id + '">✓ 确认投稿</button>';
+        if (it.status === 'pending' && r.mode !== 'review') btns += '<button class="btn" data-act="ap-now" data-id="' + it.id + '">⚡ 立即投稿</button>';
+        if (it.status === 'approved') btns += '<button class="btn" data-act="ap-now" data-id="' + it.id + '">⚡ 不等了，现在投</button>';
+        if (it.status === 'pending') btns += '<button class="btn" data-act="ap-skip" data-id="' + it.id + '">忽略</button>';
+        var sub = it.status === 'done' ? ('已发出 ' + (it.bvid || '')) : (stTxt[it.status] || it.status) + (it.error ? ('：' + it.error) : '');
+        html += '<div style="padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px">' +
+          '<div style="font-size:12.5px">' + esc(it.title) + '（' + Math.round((it.size || 0) / 1048576) + ' MB）</div>' +
+          '<div class="note">' + esc(sub) + '</div>' +
+          (btns ? '<div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">' + btns + '</div>' : '') + '</div>';
+      });
+      q.innerHTML = html;
+    }).catch(function () { q.innerHTML = '<div class="note">队列读不到（后端没起来？）</div>' });
   }
 
   function goto(page) {
@@ -1048,6 +1095,19 @@ img.avatar{border:1px solid var(--line);}
           if (r.ok) { var di = $('#dyn-input'); if (di) di.value = ''; }
         })
         .catch(function (e) { if (resEl) resEl.textContent = '失败：' + e.message; toast('发布失败：' + e.message); });
+    }
+
+    // ============ 发布：自动发视频队列操作 ============
+    if (act === 'ap-approve' || act === 'ap-skip') {
+      return post('/publish/auto/approve', { id: t.dataset.id, act: act === 'ap-skip' ? 'remove' : '' })
+        .then(function (r) { toast(r.ok ? (act === 'ap-skip' ? '已忽略' : '已确认，间隔到点自动投') : ('失败：' + (r.error || ''))); paint(); })
+        .catch(function (e) { toast('操作失败：' + e.message); });
+    }
+    if (act === 'ap-now') {
+      toast('正在投稿…');
+      return post('/publish/auto/now', { id: t.dataset.id })
+        .then(function (r) { toast(r.ok ? '已投出去（' + (r.bvid || '见创作中心') + '）' : ('失败：' + (r.error || '未知'))); paint(); })
+        .catch(function (e) { toast('投稿失败：' + e.message); });
     }
 
     // ============ 发布：视频（点启动才投稿） ============

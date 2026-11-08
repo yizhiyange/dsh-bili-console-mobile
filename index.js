@@ -57,9 +57,12 @@ import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChai
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（走 DSH 本机网页接口，默认关）
 import { pushToDshSession, buildReportPrompt, pickSessionModel, listMethods } from './lib/dshsession.mjs'
+import { autoTick, autoSnapshot, publishOne } from './lib/autopublish.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
+// QQ 遥控门卫（AstrBot 桥接）：默认关，开了才监听端口，见 lib/remote.mjs
+import { startRemote, remoteSnapshot } from './lib/remote.mjs'
 // 一键自更新（下载 → 解压 → 替换，带进度）
 import { startSelfUpdate, selfUpdateSnapshot } from './lib/selfupdate.mjs'
 
@@ -616,6 +619,8 @@ export function apply(ctx, _config) {
   // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
   let hostCtx = null          // apply 时拿到的宿主上下文，用来取 DSH 网页服务地址
   let dshPush = { ok: null, at: 0, error: '', stage: '', detail: null, sessionId: '', via: '' }
+  // QQ 遥控门卫控制器（默认关；开/关/换端口由它自己每 5 秒同步，不用重启插件）
+  let remoteCtl = null
 
   /** 开了「发进 DSH 会话」就把这一轮小结投过去（手动轮 / 定时轮共用；异步，不挡返回，失败只记日志） */
   async function maybePushRound(home, s) {
@@ -688,6 +693,7 @@ export function apply(ctx, _config) {
       dshPush,
       // 这个 DSH 会话准备用哪个模型（从插件自己的配置里挑，界面上要给人看见）
       dshSessionModel: pickSessionModel(home),
+      remote: remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home),
       envJob: envJobSnapshot(),
       venv: vst,
       venvReady: Boolean(vst.venvReady || vst.baseWithDeps),
@@ -757,6 +763,27 @@ export function apply(ctx, _config) {
       // 转写能力有 15 秒缓存，这里 await 一下（云端模式基本零开销）
       try { await refreshAsrInfo(loadConfig(home)) } catch {}
       return sendJson(res, 200, buildState())
+    }
+    // ===== QQ 遥控：本机面板专用（外面那扇小门只能调 /cmd，改不了这些设置） =====
+    if (req.method === 'GET' && path === '/remote/state') {
+      return sendJson(res, 200, { ok: true, ...(remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)) })
+    }
+    if (req.method === 'POST' && path === '/remote/config') {
+      const b = await readBody(req)
+      // 只收这 5 个键，别的一律丢掉：遥控接口绝不能顺手改到模型 / 密钥 / 人设
+      const patch = {}
+      if ('remoteOn' in b) patch.remoteOn = Boolean(b.remoteOn)
+      if ('remoteReadOnly' in b) patch.remoteReadOnly = Boolean(b.remoteReadOnly)
+      if ('remotePort' in b) {
+        const p = Number(b.remotePort)
+        patch.remotePort = Number.isFinite(p) && p >= 1024 && p <= 65535 ? Math.floor(p) : 8792
+      }
+      if ('remoteHost' in b) patch.remoteHost = ['0.0.0.0', '127.0.0.1'].includes(String(b.remoteHost)) ? String(b.remoteHost) : '0.0.0.0'
+      if ('remoteToken' in b) patch.remoteToken = String(b.remoteToken || '').trim().slice(0, 128)
+      const changed = saveConfig(home, patch)
+      // 立刻生效，不等 5 秒轮询；current() 会在第一次开启时自动铸口令
+      try { remoteCtl?.sync() } catch {}
+      return sendJson(res, 200, { ok: true, changed, ...(remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)) })
     }
     // 手动发一条测试消息进 DSH 会话（走 DSH 本机网页接口，和 qq 机器人同一条路）
     if (req.method === 'POST' && path === '/dsh/push') {
@@ -906,6 +933,38 @@ export function apply(ctx, _config) {
         }
         finally { try { cli.close() } catch { /* noop */ } }
       } catch (e) { return sendJson(res, 200, { ok: false, error: e?.message ?? String(e) }) }
+    }
+
+    // ============ 自动发视频（2026-11-08：开关默认关；全自动 / 人工审核两种模式） ============
+    if (req.method === 'GET' && path === '/publish/auto') {
+      const c = loadConfig(home)
+      return sendJson(res, 200, { ok: true, ...autoSnapshot(home, c), loggedIn: loginStatus(home).loggedIn })
+    }
+    if (req.method === 'POST' && path === '/publish/auto/approve') {
+      const b = await readBody(req)
+      const s = (() => { try { return JSON.parse(readFileSync(join(home, '.autopublish.json'), 'utf8')) } catch { return null } })()
+      const it = s && Array.isArray(s.queue) ? s.queue.find((q) => q.id === String(b.id || '')) : null
+      if (!it) return sendJson(res, 200, { ok: false, error: '没找到这条（可能已被清理）' })
+      if (String(b.act || '') === 'remove') { it.status = 'skipped'; }
+      else { it.status = 'approved'; if (b.title) it.title = String(b.title).slice(0, 80); if (b.desc != null) it.desc = String(b.desc).slice(0, 240) }
+      writeFileSync(join(home, '.autopublish.json'), JSON.stringify(s, null, 2), 'utf8')
+      return sendJson(res, 200, { ok: true })
+    }
+    // 人工审核：点「立即投稿」不用等间隔（人点的当然算数），但每日上限仍然拦
+    if (req.method === 'POST' && path === '/publish/auto/now') {
+      const b = await readBody(req)
+      const c = loadConfig(home)
+      const s = (() => { try { return JSON.parse(readFileSync(join(home, '.autopublish.json'), 'utf8')) } catch { return null } })()
+      const it = s && Array.isArray(s.queue) ? s.queue.find((q) => q.id === String(b.id || '') && q.status !== 'done') : null
+      if (!it) return sendJson(res, 200, { ok: false, error: '没找到这条' })
+      if ((s.day || '') === dayKey() && (s.dayCount || 0) >= Math.max(1, Number(c.apPerDay) || 2)) {
+        return sendJson(res, 200, { ok: false, error: '今天发够了（每日上限），明天再来' })
+      }
+      const r = await publishOne(home, c, it, (m) => logLine(home, m))
+      it.status = r.ok ? 'done' : 'failed'; it.bvid = r.bvid || ''; it.error = r.error || ''; it.publishedAt = Date.now()
+      if (r.ok) { s.lastPubMs = Date.now(); s.dayCount = (s.dayCount || 0) + 1 }
+      writeFileSync(join(home, '.autopublish.json'), JSON.stringify(s, null, 2), 'utf8')
+      return sendJson(res, 200, { ok: r.ok, bvid: r.bvid, error: r.error })
     }
 
     // 生成视频（最简图文口播）：AI 写文案 → 本地渲染，零额外 API 费（2026-10-31 加）
@@ -1943,6 +2002,13 @@ export function apply(ctx, _config) {
     try { if (PKG.version && PKG.version !== VERSION) log(`版本号不一致：lib/version.mjs 是 ${VERSION}，package.json 是 ${PKG.version} —— 发新版请两边一起改`) } catch {}
     logLine(home, '已挂载（网页控制台在线）')
 
+    // QQ 遥控门卫：默认关。开了才另起一个带口令的小端口，只认白名单动作；
+    // 关着的时候一个端口都不监听，电脑版原有行为不变。
+    try {
+      remoteCtl = startRemote({ home, handle, log: (m) => logLine(home, m) })
+      ctx.effect(() => remoteCtl.stop, 'bili-console: QQ 遥控门卫')
+    } catch (e) { log(`QQ 遥控没起来（不影响主功能）：${e?.message ?? e}`) }
+
     // 版本自检：开插件时悄悄查一次，之后每 6 小时一次。全程 unref + try/catch，
     // 失败了也不吭声（界面上会有"没查到，试试换个加速源"的提示，不打扰、更不会拖慢插件）
     try {
@@ -2053,6 +2119,23 @@ export function apply(ctx, _config) {
       return () => clearInterval(scheduler)
     }, 'bili-console: 值守调度')
   } catch (e) { log(`值守调度没起：${e?.message ?? e}`) }
+
+  //   ③ 自动发视频调度：每 60 秒看一眼（开关默认关；全自动 / 人工审核见 lib/autopublish.mjs）
+  try {
+    ctx.effect(() => {
+      const t = setInterval(async () => {
+        try {
+          const c = loadConfig(home)
+          if (!c.apOn) return
+          const schOk = scheduleState(c, new Date()).ok
+          const r = await autoTick({ home, cfg: c, scheduleOk: schOk, log: (m) => logLine(home, m) })
+          if (r.did) logLine(home, '自动发视频：已投 ' + (r.bvid || '（BV 号见创作中心）'))
+        } catch (e) { log(`自动发视频调度异常：${e?.message ?? e}`) }
+      }, 60 * 1000)
+      if (t.unref) t.unref()
+      return () => clearInterval(t)
+    }, 'bili-console: 自动发视频调度')
+  } catch (e) { log(`自动发视频调度没起：${e?.message ?? e}`) }
 
   // Phase 2：首次启动在后台预热 Python 环境——干净机器会自动建 venv 装依赖（下载即用），
   //   本机命中系统 Python 则瞬间完成。绝不阻塞启动，失败只记日志。
