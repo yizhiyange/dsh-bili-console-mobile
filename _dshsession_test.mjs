@@ -2,7 +2,7 @@
  * 回归：DSH 会话推送走「本机网页接口」这条真路径。
  * 用假的 .credentials.yaml + 假的 fetch，不发真请求、不碰真 DSH。
  */
-import { pushToDshSession, buildReportPrompt } from './lib/dshsession.mjs'
+import { pushToDshSession, buildReportPrompt, pickSessionModel } from './lib/dshsession.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,8 +14,13 @@ const secret = Buffer.alloc(32, 7).toString('base64url')
 writeFileSync(join(tmp, '.credentials.yaml'), [
   'version: 1', 'records:', '  client-connection/browser-session:',
   '    kind: grant', '    payload:', '      version: 1',
-  '      secret: ' + secret, '',
+      '      secret: ' + secret, '',
 ].join('\n'))
+// 模拟插件「模型与密钥」页的配置：主模型是智谱免费模型，链里有对应的 DSH preset
+writeFileSync(join(home, 'config.json'), JSON.stringify({
+  models: [{ id: 'free-glm-flash-test', provider: 'glm', modelName: 'glm-4-flash-250414', displayName: '临时测试 · 免费' }],
+  chainOrder: ['free-glm-flash-test', 'preset:astrbot-bigmodel-1:glm-5.3-flash', 'preset:glm:GLM-4-Flash'],
+}))
 
 const ctx = {
   get: (n) => n === 'webServer' ? { getOrigin: () => 'http://127.0.0.1:12345' } : null,
@@ -30,6 +35,7 @@ globalThis.fetch = async (url, init) => {
   let value = {}
   if (body.method === 'session/list') value = { items: listItems }
   if (body.method === 'session/create') value = { sessionId: 'bili-console-new' }
+  if (body.method === 'session/selectModel') value = { selected: { provider: 'glm', model: 'GLM-4-Flash' } }
   return {
     status: 200, ok: true,
     json: async () => ({ type: 'server-response', rpcId: body.rpcId, result: { ok: true, value } }),
@@ -54,6 +60,25 @@ const req = promptCall && promptCall.body.payload.args.request
 ok(!!req && Array.isArray(req.content) && req.content[0].text === '这一轮刷了 3 条', '消息内容字段是 content（不是 prompt）')
 ok(!!req && req.mode === 'queue' && typeof req.requestId === 'string' && req.requestId.length > 10, '带 mode=queue 和 requestId')
 ok(!calls.some((c) => c.body.method === 'session/create'), '有现成会话时不乱新建')
+
+// ⑦ 2026-11-08：发消息前先指定模型。不指定的话 DSH 会拿全局默认（用户已关掉的
+//    本地模型 gemma-2-9b-it）回这一轮，直接 "Failed to load model" 400。
+const picked = pickSessionModel(home)
+ok(picked.fromPlugin === true && picked.provider === 'glm' && picked.model === 'GLM-4-Flash',
+  '从插件配置里挑出同一服务商的模型：' + picked.label)
+const selCall = calls.find((c) => c.body.method === 'session/selectModel')
+ok(!!selCall, '发消息前真的调了 session/selectModel')
+const selReq = selCall && selCall.body.payload.args.request
+ok(!!selReq && selReq.sessionId === 'bili-console-old' && selReq.provider === 'glm' && selReq.model === 'GLM-4-Flash',
+  'selectModel 参数带 sessionId / provider / model')
+ok(calls.findIndex((c) => c.body.method === 'session/selectModel') < calls.findIndex((c) => c.body.method === 'session/prompt'),
+  '先指定模型、再发消息（顺序不能反）')
+ok(r1.model && r1.model.applied === true && r1.model.fromPlugin === true, '返回里带这次实际用的模型，界面能显示')
+
+// ⑧ 插件没配模型时退回稳定模型，绝不挑那个可能已关掉的本地默认
+const noCfg = pickSessionModel(join(tmp, 'not-exist'))
+ok(noCfg.fromPlugin === false && noCfg.provider === 'deepseek-account', '没配置时退回 DSH 自带的 DeepSeek Flash：' + noCfg.label)
+ok(noCfg.model !== 'gemma-2-9b-it', '绝不挑那个已关掉的本地模型')
 
 // ② 没有可用会话时才新建，并记住会话编号
 calls = []

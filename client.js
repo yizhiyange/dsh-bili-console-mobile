@@ -2834,17 +2834,28 @@ window.__ModuleLoader__.load({
         {
           const dp = st.dshPush || null
           const failed = Boolean(dp && dp.at && !dp.ok)
+          // 会话用哪个模型：没发过就显示「准备用」，发过就显示这次实际用的
+          const sm = st.dshSessionModel || null
+          const used = (dp && dp.model) || null
+          const shownModel = used || sm
+          const modelLine = shownModel
+            ? ('这个会话用：' + shownModel.label + (shownModel.fromPlugin ? '（你插件里配的）' : '（DSH 自带的备用模型）'))
+            : ''
           const apiLines = st.dshApi ? Object.keys(st.dshApi).map((k) => {
             const v = st.dshApi[k]
             return '· ' + k + '：' + (!v ? '没有' : (Array.isArray(v) ? (v.length ? v.join('、') : '（空对象）') : String(v)))
           }).join('\n') : ''
           put(curGroup, Card({
             title: '把小结发进 DSH 会话',
-            sub: '开着的话，每轮跑完 DSH 里会多一条记录，AI 还能接着聊',
+            sub: '开着的话，每轮跑完 DSH 里会多一条记录，AI 会用你插件配的模型回一句',
             right: Tag({ c: failed ? 'amber' : 'gray', children: failed ? '没发出去' : '要 DSH 开着' }),
           },
             h('div', { 'data-bd-note': '', style: { margin: '0' } },
-              '插件会在 DSH 会话列表里建一个「刷B站」会话，把每轮结果发进去，DSH 里的 AI 看到后会回一句（会用到你选的模型，花一点点 token）。要 DSH 桌面端开着才行；独立版 App 里没有 DSH，这个功能用不了。'),
+              '每轮跑完，插件会在 DSH 会话列表里建（或复用）一个「刷B站」会话，把结果发进去。DSH 会把它当成一条消息、让 AI 回一句，所以会花一点点模型额度。要 DSH 桌面端开着；独立版 App 里没有 DSH，用不了。'),
+            modelLine ? h('div', { 'data-bd-note': '', style: { margin: '0' } },
+              modelLine + '。发消息前会先帮 DSH 把模型指定好，不会再随手抓到你关掉的本地模型。' +
+              (used && !used.applied ? '不过这次没指定成功，DSH 可能用了它自己的默认模型。' : '') +
+              'DSH 这个接口会顺手把默认模型也设成同一个，想换回去在 DSH 右下角自己选一下就行。') : null,
             ToggleRow({
               label: '每轮跑完，自动往 DSH 会话里发一条小结',
               note: '默认关着。发不出去只记日志，完全不影响刷视频、发评论、写备注',

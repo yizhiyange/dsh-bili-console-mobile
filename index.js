@@ -56,7 +56,7 @@ import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChai
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
 // 把过程投进 DSH 会话（走 DSH 本机网页接口，默认关）
-import { pushToDshSession, buildReportPrompt, listMethods } from './lib/dshsession.mjs'
+import { pushToDshSession, buildReportPrompt, pickSessionModel, listMethods } from './lib/dshsession.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
 import { VERSION as APP_VERSION, PACKAGE as PKG_NAME } from './lib/version.mjs'
@@ -632,6 +632,7 @@ export function apply(ctx, _config) {
           dshPush = {
             ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '',
             detail: r.detail || null, sessionId: r.sessionId || '', via: r.via || '',
+            model: r.model || null,
           }
           if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error)
         })
@@ -685,6 +686,8 @@ export function apply(ctx, _config) {
       selfUpdate: selfUpdateSnapshot(),
       dshApi,
       dshPush,
+      // 这个 DSH 会话准备用哪个模型（从插件自己的配置里挑，界面上要给人看见）
+      dshSessionModel: pickSessionModel(home),
       envJob: envJobSnapshot(),
       venv: vst,
       venvReady: Boolean(vst.venvReady || vst.baseWithDeps),
@@ -764,6 +767,7 @@ export function apply(ctx, _config) {
       dshPush = {
         ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '',
         detail: r.detail || null, sessionId: r.sessionId || '', via: r.via || '',
+        model: r.model || null,
       }
       return sendJson(res, 200, { ok: r.ok, ...r })
     }

@@ -772,8 +772,13 @@ img.avatar{border:1px solid var(--line);}
     var dpTag = dpush.at
       ? (dpush.ok ? '<span class="tag green">已连通</span>' : '<span class="tag amber">没发出去</span>')
       : '<span class="tag gray">还没试过</span>';
+    var dsm = dpush.model || st().dshSessionModel || null;
+    var dsmLine = dsm
+      ? '<div class="note" style="margin:0 0 8px">这个会话用：' + esc(dsm.label) + (dsm.fromPlugin ? '（你插件里配的）' : '（DSH 自带的备用模型）') + '。发消息前会先指定好，不会再抓到你关掉的本地模型。DSH 这接口会顺手把默认模型也设成同一个，想换回去在 DSH 右下角选一下就行。</div>'
+      : '';
     var dshCard = card('把小结发进 DSH 会话', '每轮跑完，让 DSH 里也留一条记录', dpTag,
-      '<div class="note" style="margin:0 0 8px">要 DSH 桌面端开着。开着以后插件会在会话列表里建一个「刷B站」会话，把每轮结果发进去，DSH 里的 AI 会回一句（用到你选的模型，花一点点 token）。</div>' +
+      '<div class="note" style="margin:0 0 8px">要 DSH 桌面端开着。插件会在会话列表里建（或复用）一个「刷B站」会话，把每轮结果发进去，DSH 会当成一条消息、让 AI 用你插件配的模型回一句，会花一点点额度。</div>' +
+      dsmLine +
       toggleRow('每轮跑完自动发一条小结', '默认关着；发不出去只记日志，不影响刷视频', !!c.dshSession, 'dshSession') +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">' +
       '<button class="btn ghost sm" data-act="dshpush">试一下</button>' +
