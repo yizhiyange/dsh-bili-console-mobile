@@ -55,7 +55,7 @@ import { describeImage, visionReady } from './lib/vision.mjs'
 import { startVideoJob, videoJobSnapshot, listAssets, saveAssets, buildVideoChain, previewTts, renderPreviewPng, testImageGen, genOpeningVideo } from './lib/videogen.mjs'
 // 一键安装运行环境（Python / 依赖 / 转写后端），带进度
 import { startEnvJob, envJobSnapshot } from './lib/envjob.mjs'
-// 把过程投进 DSH 会话（实验性，默认关）
+// 把过程投进 DSH 会话（走 DSH 本机网页接口，默认关）
 import { pushToDshSession, buildReportPrompt, listMethods } from './lib/dshsession.mjs'
 // 版本自检（DSH 自带的「检查更新」只更新 DSH 自己，管不到插件，所以自己造一套）
 import { checkUpdate, snapshot, setUpdateOption, initUpdate } from './lib/update.mjs'
@@ -581,9 +581,17 @@ export function apply(ctx, _config) {
   let stopRequested = false         // 用户点了「停止」：下一处检查点就退出
   let roundLabel = ''               // 当前在跑哪种轮次（手动/试跑/定时），给界面显示
   /**
-   * DSH 能力探头：看看宿主到底把哪些服务暴露给插件（sessions / agents ...）。
-   * 只读：列方法名，**绝不调用**——接口没有公开文档，乱调可能把 DSH 弄坏。
-   * 结果会显示在设置的「运行环境」里，用来判断"能不能把活动写进 DSH 会话"。
+   * DSH 能力探头：只看**我们主动点名的这几个**服务对象上有哪些方法名。
+   *
+   * 2026-11-08 更正：下面 6 个名字是插件自己写死去问的，不是「DSH 允许插件用的
+   * 全部能力」，更不是权限清单。以前界面把它写成"DSH 给插件开放的接口"是错的。
+   * 查过 app.asar 源码：插件 ctx 是 Cordis 内部服务容器，里面摆的是会话仓库、
+   * agent 注册表、投影、webServer 等内部对象；真正「往会话发消息」的
+   * session/prompt 是给本机客户端的 Remote RPC（要会话 Cookie），不在插件 ctx 里。
+   * 但 ctx 里的 webServer 能给出这个服务的本机地址，插件可以自己发 HTTP 过去
+   * （lib/dshsession.mjs 就是这么做的，2026-11-08 真机验证通过）。
+   *
+   * 只读：列方法名，**绝不调用**——乱调内部对象可能把 DSH 弄坏。
    */
   function probeDshApi(ctx) {
     const out = {}
@@ -606,8 +614,8 @@ export function apply(ctx, _config) {
 
   // 转写能力探测：15 秒缓存，避免 /state 每 2 秒轮询都去起一个 python 子进程。
   // 云端模式是纯配置判断（不起进程），本地模式才真的 import 探一次。
-  let hostCtx = null          // apply 时拿到的宿主上下文，用来调 agents 服务
-  let dshPush = { ok: null, at: 0, error: '', stage: '' }
+  let hostCtx = null          // apply 时拿到的宿主上下文，用来取 DSH 网页服务地址
+  let dshPush = { ok: null, at: 0, error: '', stage: '', detail: null, sessionId: '', via: '' }
 
   /** 开了「发进 DSH 会话」就把这一轮小结投过去（手动轮 / 定时轮共用；异步，不挡返回，失败只记日志） */
   async function maybePushRound(home, s) {
@@ -620,7 +628,13 @@ export function apply(ctx, _config) {
         ...(s.items || []).filter((x) => x.grade === '值得看' || x.grade === '可以看').slice(0, 5).map((x) => '· ' + String(x.title || x.bvid).slice(0, 26) + ' —— ' + String(x.reason || '').slice(0, 30)),
       ]
       pushToDshSession(hostCtx, { home, text: buildReportPrompt(lines), cwd: home })
-        .then((r) => { dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }; if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error) })
+        .then((r) => {
+          dshPush = {
+            ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '',
+            detail: r.detail || null, sessionId: r.sessionId || '', via: r.via || '',
+          }
+          if (!r.ok) logLine(home, '投进 DSH 会话失败（' + (r.stage || '') + '）：' + r.error)
+        })
         .catch(() => {})
     } catch { /* 投递失败不影响跑轮 */ }
   }
@@ -741,12 +755,16 @@ export function apply(ctx, _config) {
       try { await refreshAsrInfo(loadConfig(home)) } catch {}
       return sendJson(res, 200, buildState())
     }
-    // 试验：把一句话投进 DSH 会话（用来验证 agents 接口通不通）
+    // 手动发一条测试消息进 DSH 会话（走 DSH 本机网页接口，和 qq 机器人同一条路）
     if (req.method === 'POST' && path === '/dsh/push') {
       const b = await readBody(req)
-      const text = String(b.text || '').trim() || buildReportPrompt(['（这是一次手动测试：插件正在验证能不能把消息写进 DSH 会话）'])
-      const r = await pushToDshSession(hostCtx, { home, text, cwd: home, sessionId: 'bili-console' })
-      dshPush = { ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '' }
+      const text = String(b.text || '').trim() ||
+        '【刷B站插件】这是一条手动测试消息，说明「把小结发进 DSH 会话」已经能用了。只需回复「收到」，不要调用任何工具。'
+      const r = await pushToDshSession(hostCtx, { home, text, cwd: home })
+      dshPush = {
+        ok: r.ok, at: Date.now(), error: r.error || '', stage: r.stage || '',
+        detail: r.detail || null, sessionId: r.sessionId || '', via: r.via || '',
+      }
       return sendJson(res, 200, { ok: r.ok, ...r })
     }
     // ===== 版本自检 =====
@@ -1533,8 +1551,8 @@ export function apply(ctx, _config) {
       })
       return
     }
-    if (req.method === 'GET' && path === '/assets') {
-      return sendJson(res, 200, { ok: true, items: listAssets(home) })
+    if (req.method === 'GET' && path === '/assets') {
+      return sendJson(res, 200, { ok: true, items: listAssets(home) })
     }
     if (req.method === 'POST' && path === '/assets') {
       const b = await readBody(req)

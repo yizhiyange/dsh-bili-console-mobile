@@ -243,6 +243,7 @@ img.avatar{border:1px solid var(--line);}
   <div class="main">
     <aside class="sidebar" id="side">
       <button class="pill active" data-page="overview">总览</button>
+      <button class="pill" data-page="find">找视频</button>
       <button class="pill" data-page="models">模型与密钥</button>
       <button class="pill" data-page="logs">专业日志</button>
       <button class="pill" data-page="persona">人设</button>
@@ -250,6 +251,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="safety">安全防护</button>
       <button class="pill" data-page="publish">发布</button>
       <button class="pill" data-page="settings">设置</button>
+      <button class="pill" data-page="env">环境与更新</button>
       <div class="side-spacer"></div>
       <div class="mode-card">
         <b id="mode-title">当前控制：网页</b>
@@ -259,6 +261,7 @@ img.avatar{border:1px solid var(--line);}
 
     <div class="content">
       <section class="page active" id="page-overview"></section>
+      <section class="page" id="page-find"></section>
       <section class="page" id="page-models"></section>
       <section class="page" id="page-logs"></section>
       <section class="page" id="page-persona"></section>
@@ -266,6 +269,7 @@ img.avatar{border:1px solid var(--line);}
       <section class="page" id="page-safety"></section>
       <section class="page" id="page-publish"></section>
       <section class="page" id="page-settings"></section>
+      <section class="page" id="page-env"></section>
     </div>
   </div>
 </div>
@@ -751,7 +755,47 @@ img.avatar{border:1px solid var(--line);}
       '<button class="btn ghost sm" data-act="reload">重新载入</button>' +
       '<button class="btn primary sm" data-act="saveall">保存设置</button></div>');
 
-    return kwCard + sourceCard + comment + pick + dm + rep + visionCard + memCard + env + adv + saveCard;
+    /* 版本与更新：网页版以前压根没有这一块，跟环境一起放进「环境与更新」页 */
+    var up = st().update || {};
+    var upTag = up.hasUpdate
+      ? '<span class="tag amber">有新版本 v' + esc(up.latest || '') + '</span>'
+      : '<span class="tag ' + (up.ok ? 'green' : 'gray') + '">' + (up.ok ? '已是最新' : '还没查') + '</span>';
+    var updCard = card('版本与更新', 'DSH 自带的「检查更新」更新的是 DSH 软件本身，这个是插件自己的', upTag,
+      '<div class="guard-row"><div class="txt"><div class="lb">当前版本</div>' +
+      '<div class="ds">你装的是 v' + esc(up.current || st().version || '0.0.0') +
+      (up.ok ? ('；线上是 v' + esc(up.latest || '？')) : '；还没连上 GitHub 查过') + '</div></div>' +
+      '<button class="btn primary sm" data-act="upcheck">检查更新</button></div>' +
+      (up.hasUpdate ? '<div class="note" style="margin:8px 0 0">发现新版本。一键更新在 DSH 控制台的「环境与更新」页里；网页版这边先只做检查。</div>' : ''));
+
+    /* DSH_ONLY_START —— 独立 APK 里没有 DSH，同步脚本会把这一整段换成空卡片 */
+    var dpush = st().dshPush || {};
+    var dpTag = dpush.at
+      ? (dpush.ok ? '<span class="tag green">已连通</span>' : '<span class="tag amber">没发出去</span>')
+      : '<span class="tag gray">还没试过</span>';
+    var dshCard = card('把小结发进 DSH 会话', '每轮跑完，让 DSH 里也留一条记录', dpTag,
+      '<div class="note" style="margin:0 0 8px">要 DSH 桌面端开着。开着以后插件会在会话列表里建一个「刷B站」会话，把每轮结果发进去，DSH 里的 AI 会回一句（用到你选的模型，花一点点 token）。</div>' +
+      toggleRow('每轮跑完自动发一条小结', '默认关着；发不出去只记日志，不影响刷视频', !!c.dshSession, 'dshSession') +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">' +
+      '<button class="btn ghost sm" data-act="dshpush">试一下</button>' +
+      '<span class="note" style="margin:0">' + esc(dpush.at ? (dpush.ok ? '上一条已发进会话' : (dpush.error || '没发出去')) : '点一下会真发一条测试消息') + '</span></div>');
+    /* DSH_ONLY_END */
+
+    /* 2026-11-07 拆页：同一批设置卡按页签各拿各的，不再全堆在「设置」里划半天 */
+    var GROUPS = {
+      find: kwCard + sourceCard + pick,
+      settings: comment + dm + rep + visionCard + memCard,
+      env: env + adv + updCard + dshCard
+    };
+    var META = {
+      find: ['找视频', '关键词、从哪捞片、每天挑几条 —— 找片相关的都在这'],
+      settings: ['设置', '评论、私信、日报这些开关；改完即时生效'],
+      env: ['环境与更新', 'Python 依赖、检查更新，还有只读的高级信息']
+    };
+    var key = GROUPS[S.page] ? S.page : 'settings';
+    var mt = META[key];
+    var title = '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:0 2px">' +
+      '<b style="font-size:18px">' + mt[0] + '</b><span style="font-size:12px;color:var(--t2)">' + mt[1] + '</span></div>';
+    return title + GROUPS[key] + saveCard;
   }
 
   // ============ 发布页（2026-10-31 新增：动态你自己写、视频点启动才发） ============
@@ -851,7 +895,9 @@ img.avatar{border:1px solid var(--line);}
 
   var RENDER = {
     overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
-    chain: renderChain, safety: renderSafety, settings: renderSettings, publish: renderPublish
+    chain: renderChain, safety: renderSafety, publish: renderPublish,
+    // 这三个页签共用同一批设置卡，renderSettings 内部按 S.page 各拿各的
+    find: renderSettings, settings: renderSettings, env: renderSettings
   };
 
   function syncStandaloneChrome() {
@@ -923,6 +969,12 @@ img.avatar{border:1px solid var(--line);}
 
     if (act === 'go') return goto(t.dataset.page);
     if (act === 'raw') return t.classList.toggle('open');
+    if (act === 'dshpush') return post('/dsh/push', {})
+      .then(function (r) { toast(r.ok ? '已发进会话（去会话列表找「刷B站」）' : ('没发出去：' + (r.error || '未知'))); setTimeout(refresh, 800); })
+      .catch(function (e) { toast('请求失败：' + e.message); });
+    if (act === 'upcheck') return post('/update/check', { force: true })
+      .then(function (r) { toast(r.hasUpdate ? ('发现新版本 v' + (r.latest || '？')) : '已经是最新版'); setTimeout(refresh, 600); })
+      .catch(function (e) { toast('检查失败：' + e.message); });
 
     if (act === 'set') {
       var key = t.dataset.key, val = t.dataset.val === '1';

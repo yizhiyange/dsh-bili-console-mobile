@@ -28,10 +28,13 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     /* 页面顺序：左右滑动切页、顶部 tab 条都按这个排 */
+    /* 页面顺序：左右滑动切页、顶部 tab 条都按这个排。
+       2026-11-07 拆页：以前「设置」里塞了 12 张卡（找视频、环境、更新、排障全在里面），
+       找个开关要划半天。现在把「找视频」和「环境与更新」提成独立页签，设置只留零散开关。 */
     const PAGE_ORDER = [
-      ['overview', '总览'], ['models', '模型与密钥'], ['logs', '专业日志'],
+      ['overview', '总览'], ['find', '找视频'], ['models', '模型与密钥'], ['logs', '专业日志'],
       ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'],
-      ['comments', '评论'], ['publish', '发布'], ['settings', '设置'],
+      ['comments', '评论'], ['publish', '发布'], ['settings', '设置'], ['env', '环境与更新'],
     ]
 
     const API = '/api/bili-console'
@@ -106,6 +109,9 @@ window.__ModuleLoader__.load({
     [data-bd-pagewrap]{display:flex;flex-direction:column;gap:12px;}
     [data-bd-pagetitle]{display:flex;align-items:baseline;gap:10px;padding:0 2px;flex-wrap:wrap;}
     [data-bd-pagetitle] .t{font-size:18px;font-weight:700;} [data-bd-pagetitle] .s{font-size:12px;color:var(--t2);}
+    /* 排障信息（给开发者看的接口清单/原始报错）默认收进一个可展开的小框 */
+    [data-bd-tech]{font-size:11.5px;color:var(--t2);line-height:1.8;white-space:pre-wrap;word-break:break-word;
+      background:var(--gray-bg);border-radius:6px;padding:10px 12px;max-height:260px;overflow:auto;}
     [data-bd-card]{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px;}
     [data-bd-cardhead]{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px;flex-wrap:wrap;}
     [data-bd-cardhead] .t{font-size:14px;font-weight:600;} [data-bd-cardhead] .sub{font-size:11px;color:var(--t2);}
@@ -718,6 +724,8 @@ window.__ModuleLoader__.load({
       const [upRes, setUpRes] = React.useState(null)
       const [upMode, setUpMode] = React.useState(null)
       const [upCustom, setUpCustom] = React.useState(null)
+      /* 排障技术细节默认收起（放 Console 顶层：页面每 2 秒重渲染，hook 数量不能变） */
+      const [dshDetail, setDshDetail] = React.useState(false)
 
       React.useEffect(() => () => {
         alive.current = false
@@ -1806,13 +1814,13 @@ window.__ModuleLoader__.load({
         if (page === 'comments' && commentsList === null) loadComments()
       }, [page, commentsList])
 
-      /** 试验：把一句话投进 DSH 会话，验证接口通不通 */
+      /** 手动发一条测试消息进 DSH 会话 */
       const testDshPush = async () => {
         setDshTesting(true)
         try {
           const r = await jpost('/dsh/push', {})
-          if (r && r.ok) toast_('已写进 DSH 会话（去会话列表看 bili-console）')
-          else toast_('没成功（' + ((r && r.stage) || '') + '）：' + ((r && r.error) || '未知'))
+          if (r && r.ok) toast_('已发进 DSH 会话（去会话列表找「刷B站」）')
+          else toast_('没发出去：' + ((r && r.error) || '未知'))
         } catch (e) { toast_('请求失败：' + String(e?.message ?? e)) } finally { setDshTesting(false) }
       }
       /** 转写自检：真 import 一次，把版本号亮出来 */
@@ -1835,8 +1843,8 @@ window.__ModuleLoader__.load({
       /** 没关键词就别跑：直接把人带到设置页去填（以前只弹个红字错误，看不出该干嘛） */
       const needKeywords = () => {
         if ((cfg.keywords || []).length) return false
-        toast_('还没设关键词：去「设置」填几个方向（比如 AI、数码），它才知道去哪找视频')
-        setPage('settings')
+        toast_('还没设关键词：去「找视频」填几个方向（比如 AI、数码），它才知道去哪找视频')
+        setPage('find')
         return true
       }
       const runNow = async () => {
@@ -1965,7 +1973,7 @@ window.__ModuleLoader__.load({
       if (st.noAdapter) banner = h('div', { 'data-bd-banner': '', className: 'err' }, 'AI 起不来：模型没配对（NO_ADAPTER）。去「降级链」或「模型与密钥」里手动换一个已注册的模型，再手动跑一轮。')
       else if (!(cfg.keywords || []).length) banner = h('div', { 'data-bd-banner': '' },
         h('span', null, '还没设关键词 —— 填几个你感兴趣的方向（比如 AI、数码），它才知道去哪找视频'),
-        h('button', { onClick: () => setPage('settings') }, '去设置 →'))
+        h('button', { onClick: () => setPage('find') }, '去找视频 →'))
       else if (st.safeMode) banner = h('div', { 'data-bd-banner': '' }, '安全模式：当前不会自动发评论、不会发私信。想真发时，到「设置」把「自动评论并 @」和「投递方式」打开。')
 
       /* ── 侧边导航 ── */
@@ -2426,7 +2434,12 @@ window.__ModuleLoader__.load({
               pauseBak ? h('button', { 'data-bd-btn': '', className: 'ghost', onClick: resumeAll }, '恢复运行') : h('button', { 'data-bd-btn': '', className: 'danger', onClick: pauseAll }, '一键暂停'))))
       }
 
-      const renderSettings = () => {
+      /**
+       * 设置类卡片池（2026-11-07 拆页）。
+       * 所有卡片还是只写一份，入列时打一个「归哪个页面」的标签，末尾按当前页面挑出来。
+       * 以前全堆在「设置」一页里 12 张卡，划半天；现在分到「找视频 / 设置 / 环境与更新」。
+       */
+      const renderSettings = (which) => {
         const kwList = String(kws || '').split('\n').map((s) => s.trim()).filter(Boolean)
         // 关键词是"标签"型配置：加/删就**立刻保存**，不让用户再去找保存按钮
         // （以前要回车添加 + 滚到底部点保存，用户打了字以为加上了，实际没生效 → 跑轮被拒，2026-10-31 修）
@@ -2449,11 +2462,12 @@ window.__ModuleLoader__.load({
         const kwChips = h('div', { 'data-bd-chips': '' },
           kwList.map((k, i) => h('span', { key: i, 'data-bd-chip': '' }, k,
             h('button', { className: 'x', onClick: () => kwDel(i) }, '×'))))
+        /* head = 每个页面都要带的窄栏提示；tail = 每个页面底部都能直接保存 */
         const blocks = []
-        blocks.push(h('div', { 'data-bd-pagetitle': '' },
-          h('span', { className: 't' }, '设置'),
-          h('span', { className: 's' }, '每一项都能改、都能存；改完即时生效并同步到 DSH')))
-        if (narrow) blocks.splice(1, 0, h('div', { 'data-bd-banner': '' },
+        let curGroup = 'head'
+        const _push = Array.prototype.push.bind(blocks)
+        const put = (g, el) => _push({ g, el })
+        if (narrow) put('head', h('div', { 'data-bd-banner': '' },
           h('span', null, '这个面板被 DSH 挤得比较窄。想看得舒服，点右边在浏览器里全宽打开'),
           h('button', { onClick: openConsole }, '全宽打开')))
 
@@ -2477,8 +2491,9 @@ window.__ModuleLoader__.load({
             }, ej.log.join('\n')) : null)
         }
 
+        curGroup = 'find'   // ① 找视频
         /* 监听关键词 */
-        blocks.push(Card({
+        put(curGroup, Card({
           title: '监听关键词', sub: '加完立刻生效，点 × 删掉',
           right: kwList.length ? Tag({ c: 'gray', children: kwList.length + ' 个' }) : Tag({ c: 'amber', children: '还没填 · 跑不了' }),
         },
@@ -2501,7 +2516,7 @@ window.__ModuleLoader__.load({
               : '⚠️ 一个都没填的话，「跑一轮」会被直接拒绝（它不知道该搜什么）。在上面输入一个词，按回车或点「添加」。')))
 
         /* 视频从哪来（2026-10-31 加：固定关键词会一直捞同一个池子） */
-        blocks.push(Card({ title: '视频从哪来', sub: '固定关键词会一直捞同一个池子，推荐流是活水' },
+        put(curGroup, Card({ title: '视频从哪来', sub: '固定关键词会一直捞同一个池子，推荐流是活水' },
           ToggleRow({ label: '首页个性化推荐流', note: 'B站按你这个账号的口味实时推的视频，最新最相关。它和关键词是互补的：关键词决定你「搜什么」，推荐流反映你「平时爱看什么」', on: cfg.useHomeFeed !== false, onChange: (v) => saveOne('useHomeFeed', v) }),
           ToggleRow({ label: '关键词搜索', note: '用上面填的关键词去搜。可以关掉、只用推荐流。注意：关键词本身也会慢慢培养账号的推荐口味——你常搜什么、常看什么，首页推荐就越贴近什么', on: cfg.useKeywordSearch !== false, onChange: (v) => saveOne('useKeywordSearch', v) }),
           ToggleRow({ label: '两级筛选（省 token）', note: '先把一批视频的标题/时长/播放一次性粗筛，只对最值得的几条取字幕深判——省掉约 80% 的字幕请求和模型调用', on: cfg.triage !== false, onChange: (v) => saveOne('triage', v) }),
@@ -2509,8 +2524,9 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '细看几条'), h('div', { 'data-bd-ds': '' }, '粗筛之后真正取字幕深判的条数；越大越不容易漏，但越费 token')),
             Stepper({ value: (cfg.triageTop || 5) + ' 条', onStep: (d) => step('triageTop', d, ' 条') }))))
 
+        curGroup = 'social' // ② 评论·私信
         /* 评论与互动 */
-        blocks.push(Card({ title: '评论与互动', sub: null },
+        put(curGroup, Card({ title: '评论与互动', sub: null },
           ToggleRow({ label: '自动评论并 @', note: '开着才会发评论；关了就只挑不发，不打扰任何人', on: !!cfg.autoComment, onChange: (v) => saveOne('autoComment', v) }),
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '@ 谁'), h('div', { 'data-bd-ds': '' }, '要 @ 的人（不填就不 @）。注意：@ 也是"通知"，刷太多会被当成骚扰')),
@@ -2536,12 +2552,13 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每轮回复几条'), h('div', { 'data-bd-ds': '' }, '回评论的轮次上限；每条 100 字以内')),
             Stepper({ value: (cfg.replyPerRound || 0) + ' 条', onStep: (d) => step('replyPerRound', d, ' 条') }))))
 
+        curGroup = 'find'   // 回到「找视频」：挑几条、要不要转写都属于怎么找片
         /* 每天挑与转写 */
         {
           const asr = st.asr || {}
           const cloud = asr.cloud || {}
           const mode = asr.mode === 'cloud' ? 'cloud' : 'local'
-          blocks.push(Card({
+          put(curGroup, Card({
             title: '每天挑与转写', sub: null,
             right: Tag({
               c: asr.ready ? 'green' : 'gray',
@@ -2606,8 +2623,9 @@ window.__ModuleLoader__.load({
                 h('option', { value: 'small' }, 'small'), h('option', { value: 'medium' }, 'medium'), h('option', { value: 'large' }, 'large'))) : null))
         }
 
+        curGroup = 'social'
         /* 私信 */
-        blocks.push(Card({ title: '私信', sub: null },
+        put(curGroup, Card({ title: '私信', sub: null },
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '投递方式'), h('div', { 'data-bd-ds': '' }, '日报送到哪：只发公开评论 / 只发私信 / 两者都发')),
             Select({ value: cfg.dmMode || 'off', onChange: (v) => saveOne('dmMode', v) },
@@ -2624,7 +2642,7 @@ window.__ModuleLoader__.load({
             Stepper({ value: (cfg.dmReplyPerDay || 0) + ' 条', onStep: (d) => step('dmReplyPerDay', d, ' 条') }))))
 
         /* 日报详略 + 收藏夹 */
-        blocks.push(Card({ title: '日报详略 · 收藏夹', sub: null },
+        put(curGroup, Card({ title: '日报详略 · 收藏夹', sub: null },
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '报告级别'), h('div', { 'data-bd-ds': '' }, '完整 = 每个挑中的视频单独一段；薄薄两行 = 只列值不值得 + 链接；不写 = 不出日报文件，但判重表照记')),
             Select({ value: cfg.reportLevel || 'full', onChange: (v) => saveOne('reportLevel', v), minWidth: 130 },
@@ -2633,10 +2651,11 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '收藏夹 ID'), h('div', { 'data-bd-ds': '' }, '填了就把判为「值得看」的视频收进这个收藏夹（用插件里新加的 bili_favorite_add）；0 = 不收藏')),
             Input({ value: favDraft != null ? favDraft : (cfg.favFolderId != null ? String(cfg.favFolderId) : '0'), onChange: (v) => { setFavDraft(v); setDirty((d) => ({ ...d, favFolderId: true })) }, placeholder: '0' }))))
 
+        curGroup = 'ai'     // ③ AI 与记忆
         /* 识图模型 */
         {
           const vs = st.vision || {}
-          blocks.push(Card({
+          put(curGroup, Card({
             title: '识图模型（可选）', sub: '没字幕时让它看一眼封面，给判断补画面信息',
             right: Tag({ c: vs.ready ? 'green' : 'gray', children: vs.ready ? ('已配 · ' + (vs.model || '')) : '未配' }),
           },
@@ -2667,7 +2686,7 @@ window.__ModuleLoader__.load({
         {
           const mem = st.memory || {}
           const inThread = (cfg.contextMode === 'thread')
-          blocks.push(Card({ title: '上下文与记忆', sub: '默认：一条视频一个上下文，判完就忘' },
+          put(curGroup, Card({ title: '上下文与记忆', sub: '默认：一条视频一个上下文，判完就忘' },
             ToggleRow({
               label: '保留每条视频的对话上下文',
               note: '关（默认）= 每条视频都当第一次见，视频之间也互不影响；开 = 每条视频记一份「我说过什么 / 谁回了什么」，下次能接着聊',
@@ -2695,6 +2714,7 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: clearMemory }, '清空所有上下文'))))
         }
 
+        curGroup = 'env'    // ④ 运行·更新
         /* 运行环境 */
         {
           const v = st.venv || {}
@@ -2710,7 +2730,7 @@ window.__ModuleLoader__.load({
               : v.basePython
                 ? ('有 Python（' + v.basePython + '），但还没装依赖 —— 首次登录或跑一轮时会自动装，约 1-2 分钟，需联网')
                 : '没找到 Python 3。点下面的「重新检测」能看到具体试过哪些路径；确认真的没装的话，装一个 Python 3.10+ 即可'
-          blocks.push(Card({
+          put(curGroup, Card({
             title: '运行环境', sub: '依赖插件自己装，不用你手动 pip',
             right: Tag({ c: ready ? 'green' : 'amber', children: ready ? '就绪' : '待安装' }),
           },
@@ -2726,36 +2746,16 @@ window.__ModuleLoader__.load({
                   onClick: recheckEnv,
                 }, envBusy ? '检测中…' : '重新检测'))),
             envJobView(['auto', 'deps', 'python']),
-            ToggleRow({
-              label: '把每轮小结发进 DSH 会话（试验）',
-              note: '开着的话，跑完一轮会在 DSH 会话列表里留一条记录（会话名 bili-console）。DSH 没开放该接口时会失败——失败只记日志，不影响跑轮',
-              on: !!cfg.dshSession, onChange: (v) => saveOne('dshSession', v),
-            }),
-            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' } },
-              h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: dshTesting, onClick: testDshPush },
-                dshTesting ? '发送中…' : '试一下'),
-              st.dshPush && st.dshPush.at ? h('span', {
-                'data-bd-ds': '',
-                style: { fontSize: '12px', color: st.dshPush.ok ? 'var(--green-tx)' : 'var(--red-tx)' },
-              }, st.dshPush.ok ? '✓ 上一条已写进 DSH 会话' : ('✗ ' + (st.dshPush.stage || '') + '：' + (st.dshPush.error || ''))) : null),
-            st.dshApi ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
-              h('div', { style: { fontSize: '12px', color: 'var(--t2)', lineHeight: 1.8 } },
-                h('div', null, 'DSH 给插件开放的接口（只读探测）：'),
-                Object.keys(st.dshApi).map((k) => {
-                  const v = st.dshApi[k]
-                  const text = !v ? '没有' : (Array.isArray(v) ? (v.length ? v.join('、') : '（空对象）') : String(v))
-                  return h('div', { key: k }, '· ' + k + '：' + text)
-                }))) : null,
-            envDiag ? h('div', { 'data-bd-note': '', style: { marginTop: '10px' } },
-              h('div', null, '平台 ' + (envDiag.platform || '?') + '　找到：' + (envDiag.found ? (envDiag.found.cmd + '（' + envDiag.found.ver + '）') : '没有任何可用的 Python')),
-              (envDiag.tried || []).length ? h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)', whiteSpace: 'pre-wrap', lineHeight: 1.7 } },
-                '试过的解释器（✓ 通 / ✗ 失败）：\n' + envDiag.tried.map((t) => (t.ok ? '✓ ' : '✗ ') + t.cmd + (t.ok ? ('  ' + t.ver) : (t.why ? ('  — ' + t.why) : ''))).join('\n')) : null,
-              h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)' } },
+            envDiag ? h('details', { style: { marginTop: '4px' } },
+              h('summary', { style: { fontSize: '12px', color: 'var(--blue)', cursor: 'pointer' } }, '看检测细节（试过哪些 Python）'),
+              h('div', { 'data-bd-tech': '', style: { marginTop: '8px' } },
+                '平台 ' + (envDiag.platform || '?') + '　找到：' + (envDiag.found ? (envDiag.found.cmd + '（' + envDiag.found.ver + '）') : '没有任何可用的 Python') + '\n' +
+                ((envDiag.tried || []).length ? '试过的解释器（✓ 通 / ✗ 失败）：\n' + envDiag.tried.map((t) => (t.ok ? '✓ ' : '✗ ') + t.cmd + (t.ok ? ('  ' + t.ver) : (t.why ? ('  — ' + t.why) : ''))).join('\n') + '\n' : '') +
                 'venv：' + (envDiag.venv && envDiag.venv.exists ? ((envDiag.venv.ready ? '已就绪 · ' : '存在但依赖未装全 · ') + envDiag.venv.path) : '还没建'))) : null))
         }
 
         /* 高级（只读） */
-        blocks.push(Card({ title: '高级（只读，改文件才行）', sub: null },
+        put(curGroup, Card({ title: '高级（只读，改文件才行）', sub: null },
           h('div', { 'data-bd-sum': '' },
             ['pythonPath', 'dshBin', 'headlessProfile', 'workspace'].map((k) => k + '：' + (cfg[k] || '（空）')).join('\n') + '\noverlayMcp：' + (cfg.overlayMcp ? '开' : '关'))))
 
@@ -2770,7 +2770,7 @@ window.__ModuleLoader__.load({
           const autoOn = base.autoCheck !== false
           const job = st.selfUpdate || {}
           const jobRunning = Boolean(job.running)
-          blocks.push(Card({
+          put(curGroup, Card({
             title: '版本与更新',
             sub: 'DSH 自带的「检查更新」更新的是 DSH 软件本身，这个是专门给本插件用的',
             right: Tag({
@@ -2826,14 +2826,75 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: () => { setUpMode(null); setUpCustom(null); setUpRes(null) } }, '恢复默认'))))
         }
 
-        /* 保存栏 */
-        blocks.push(Card({ title: null },
+        /* ── 把小结发进 DSH 会话 ────────────────────────────────────────
+           2026-11-08 走通了：插件自己给 DSH 的本机网页接口发请求（和 qq 机器人
+           同一条路），已真机验证消息能出现在 DSH 会话里。所以这里是正式功能，
+           开关和「试一下」放主视野；给开发者看的接口清单收在「看技术细节」。 */
+        curGroup = 'debug'
+        {
+          const dp = st.dshPush || null
+          const failed = Boolean(dp && dp.at && !dp.ok)
+          const apiLines = st.dshApi ? Object.keys(st.dshApi).map((k) => {
+            const v = st.dshApi[k]
+            return '· ' + k + '：' + (!v ? '没有' : (Array.isArray(v) ? (v.length ? v.join('、') : '（空对象）') : String(v)))
+          }).join('\n') : ''
+          put(curGroup, Card({
+            title: '把小结发进 DSH 会话',
+            sub: '开着的话，每轮跑完 DSH 里会多一条记录，AI 还能接着聊',
+            right: Tag({ c: failed ? 'amber' : 'gray', children: failed ? '没发出去' : '要 DSH 开着' }),
+          },
+            h('div', { 'data-bd-note': '', style: { margin: '0' } },
+              '插件会在 DSH 会话列表里建一个「刷B站」会话，把每轮结果发进去，DSH 里的 AI 看到后会回一句（会用到你选的模型，花一点点 token）。要 DSH 桌面端开着才行；独立版 App 里没有 DSH，这个功能用不了。'),
+            ToggleRow({
+              label: '每轮跑完，自动往 DSH 会话里发一条小结',
+              note: '默认关着。发不出去只记日志，完全不影响刷视频、发评论、写备注',
+              on: !!cfg.dshSession, onChange: (v) => saveOne('dshSession', v),
+            }),
+            h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' } },
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', disabled: dshTesting, onClick: testDshPush },
+                dshTesting ? '发送中…' : '试一下'),
+              dp && dp.at ? h('span', {
+                'data-bd-ds': '',
+                style: { fontSize: '12px', color: dp.ok ? 'var(--green-tx)' : 'var(--amber-tx)' },
+              }, dp.ok ? '✓ 已发进 DSH 会话（去会话列表看「刷B站」）' : ('✗ ' + (dp.error || '这条没发出去（不影响别的）'))) : null),
+            h('button', {
+              'data-bd-btn': '', className: 'ghost sm', style: { alignSelf: 'flex-start' },
+              onClick: () => setDshDetail(!dshDetail),
+            }, dshDetail ? '收起技术细节' : '看技术细节（给开发者）'),
+            dshDetail ? h('div', { 'data-bd-tech': '' },
+              (dp && dp.sessionId ? ('会话编号：' + dp.sessionId + '\n') : '') +
+              (dp && dp.error ? ('说明：' + dp.error + '\n') : '') +
+              (dp && dp.stage ? ('环节：' + dp.stage + '\n') : '') +
+              (dp && dp.detail ? ('\n诊断信息：\n' + JSON.stringify(dp.detail, null, 2).slice(0, 1800) + '\n') : '') +
+              '\n我们点名问过的几个服务对象（只读，不是权限清单）：\n' + (apiLines || '（没探到）')) : null))
+        }
+
+        /* 保存栏：三个页面底部都放一份，改完不用切页找保存 */
+        curGroup = 'tail'
+        put(curGroup, Card({ title: null },
           h('span', { className: 'sub' }, '所有修改写入插件同一份 config.json，DSH 那边同步生效'),
           h('div', { style: { marginLeft: 'auto', display: 'flex', gap: '10px' } },
             h('button', { 'data-bd-btn': '', className: 'ghost', onClick: () => { setDirty({}); setPersona(null); setKws(null); setMentionDraft(null); setDmUidDraft(null); setFavDraft(null) } }, '重新载入'),
             h('button', { 'data-bd-btn': '', className: 'primary', onClick: saveSettings }, '保存设置'))))
 
-        return h('div', { 'data-bd-pagewrap': '' }, blocks)
+        /* ── 按当前页签挑卡片：head 每页都带、tail 每页都带，中间只放本页的卡 ── */
+        const PAGE_OF = { find: 'find', social: 'settings', ai: 'settings', env: 'env', debug: 'env' }
+        const META = {
+          find: ['找视频', '关键词、从哪捞片、每天挑几条 —— 找片相关的都在这'],
+          settings: ['设置', '评论、私信、日报这些开关；改完即时生效，DSH 那边同步'],
+          env: ['环境与更新', 'Python 依赖、检查更新，还有给开发者的排障信息'],
+        }
+        const key = META[which] ? which : 'settings'
+        const [title, sub] = META[key]
+        const withKeys = (arr, p) => arr.map((el, i) => (el && el.props ? React.cloneElement(el, { key: p + i }) : el))
+        const headEls = withKeys(blocks.filter((b) => b.g === 'head').map((b) => b.el), 'h')
+        const cards = withKeys(blocks.filter((b) => PAGE_OF[b.g] === key).map((b) => b.el), 'c')
+        const tailEls = withKeys(blocks.filter((b) => b.g === 'tail').map((b) => b.el), 't')
+        return h('div', { 'data-bd-pagewrap': '' },
+          h('div', { 'data-bd-pagetitle': '' },
+            h('span', { className: 't' }, title),
+            h('span', { className: 's' }, sub)),
+          ...headEls, ...cards, ...tailEls)
       }
 
       /**
@@ -3178,7 +3239,14 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doVideo }, '启动投稿'))))
       }
 
-      const PAGERENDER = { overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona, chain: renderChain, safety: renderSafety, comments: renderComments, publish: renderPublish, settings: renderSettings }
+      const PAGERENDER = {
+        overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
+        chain: renderChain, safety: renderSafety, comments: renderComments, publish: renderPublish,
+        // 这三个页面共用同一批「设置类卡片」，只是各拿各的那几张
+        find: () => renderSettings('find'),
+        settings: () => renderSettings('settings'),
+        env: () => renderSettings('env'),
+      }
       const content = h(PageBoundary, { onHome: () => setPage('overview') }, h('div', { 'data-bd-content': '' }, (PAGERENDER[page] || renderOverview)()))
 
       const modal = h('div', { 'data-bd-mask': '', className: login.open ? 'show' : undefined },
