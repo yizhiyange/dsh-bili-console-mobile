@@ -2092,6 +2092,8 @@ export function apply(ctx, _config) {
           const safeMode = !c.autoComment && c.dmMode === 'off'
           if (safeMode) return
           if (!loginStatus(home).loggedIn) return
+          // 挂机总开关（2026-11-9 加）：显式 false = 值守轮次完全不跑（手动/指令仍可用）
+          if (c.autoDutyOn === false) return
           // 运行时段（7×24 / 自定义 / 谷时）
           const sch = scheduleState(c, new Date())
           if (!sch.ok) return

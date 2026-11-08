@@ -2080,6 +2080,16 @@ window.__ModuleLoader__.load({
                   title: '把「今天已挑中」清零，上限不用改，等于重新给你今天的额度',
                 }, '重置今日额度')))),
           Card({ title: '自动模式（挂机）', sub: '档位只是起点：每天几条、隔多久、每轮看多少条视频、跑哪个时段，下面全都能自己改' },
+            // 挂机总开关（2026-11-9 加）：关了值守轮次完全不跑；与网页版共用 autoDutyOn 键
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '自动值守总开关'),
+                h('div', { 'data-bd-ds': '' }, (state?.settings?.autoDutyOn === false)
+                  ? '已关闭：到点也不跑轮次；群里喊它「去刷一轮」和手动跑不受影响'
+                  : '已开启：到点自动值守（「自动评论」关着时只挑不发）')),
+              h('button', {
+                'data-bd-btn': '', className: (state?.settings?.autoDutyOn === false) ? 'primary sm' : 'ghost sm',
+                onClick: () => { jpost('/settings', { autoDutyOn: state?.settings?.autoDutyOn === false }).catch(() => {}); toast_(state?.settings?.autoDutyOn === false ? '正在打开…' : '正在关闭…') },
+              }, (state?.settings?.autoDutyOn === false) ? '打开自动值守' : '关掉自动值守')),
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
               ...[['safe', '稳妥'], ['balanced', '平衡'], ['aggressive', '激进'], ['custom', '自定义']].map(([k, label]) => h('button', {
                 key: k, 'data-bd-btn': '',

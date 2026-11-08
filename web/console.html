@@ -250,6 +250,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="chain">降级链</button>
       <button class="pill" data-page="safety">安全防护</button>
       <button class="pill" data-page="publish">发布</button>
+      <button class="pill" data-page="qq">QQ 接入</button>
       <button class="pill" data-page="settings">设置</button>
       <button class="pill" data-page="env">环境与更新</button>
       <div class="side-spacer"></div>
@@ -268,6 +269,7 @@ img.avatar{border:1px solid var(--line);}
       <section class="page" id="page-chain"></section>
       <section class="page" id="page-safety"></section>
       <section class="page" id="page-publish"></section>
+      <section class="page" id="page-qq"></section>
       <section class="page" id="page-settings"></section>
       <section class="page" id="page-env"></section>
     </div>
@@ -483,8 +485,25 @@ img.avatar{border:1px solid var(--line);}
       '<span class="tag green">挑中 ' + (rep.picked || 0) + ' 条</span>',
       repBody + (rep.exists ? '<div style="margin-top:10px"><button class="btn ghost sm" data-act="rep">展开全部 ' + (rep.picked || 0) + ' 条</button></div>' : ''));
 
+    /* 2026-11-09 补：挂机总开关+节奏卡（以前只有 DSH 内嵌版总览有，网页版一直没法关） */
+    var dutyOn = c.autoDutyOn !== false;
+    var modeSel = '<select id="duty-mode" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px">' +
+      [['any','全天 7×24'],['window','自定义时段'],['valley','只在官方谷时']].map(function (o) {
+        return '<option value="' + o[0] + '"' + ((c.scheduleMode || 'any') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+      }).join('') + '</select>';
+    var dutyCard = card('自动模式（挂机值守）', '到点自己挑视频、看内容；「自动评论」关着时只挑不发，想真发去「安全防护」页开', dutyOn ? '<span class="tag green">开着</span>' : '<span class="tag">关着</span>',
+      toggleRow('自动值守总开关', '关掉后到点也不跑轮次；群里喊它「去刷一轮」和手动跑不受影响', dutyOn, 'autoDutyOn') +
+      (dutyOn
+        ? (setRow('跑的时段', '全天 / 自定义起止 / 只在官方谷时（夜间流量便宜）', modeSel) +
+           ((c.scheduleMode || 'any') === 'window'
+             ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">从 <input type="time" id="duty-start" value="' + esc(c.activeStart || '09:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"> 到 <input type="time" id="duty-end" value="' + esc(c.activeEnd || '23:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"></div>'
+             : '') +
+           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;align-items:center">每天上限 <input type="number" id="duty-perday" value="' + esc(String(c.perDay != null ? c.perDay : 6)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 条 · 两轮间隔 <input type="number" id="duty-gap" value="' + esc(String(c.roundIntervalMinutes != null ? c.roundIntervalMinutes : 5)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 分钟</div>' +
+           '<div class="note" style="margin-top:6px">QQ 桥的「自动刷见闻」也在这个总开关之下：开关关了，桥最多收收日志，不会自己开刷。</div>')
+        : '<div class="note" style="margin-top:6px">现在是纯手动模式：群里喊它、或上面的手动按钮，它才动。</div>'));
+
     return '<div class="row-flex">' + acctCard + progCard + '</div>' +
-      '<div class="row-flex">' + chainCard + safeCard + '</div>' + logCard + repCard;
+      '<div class="row-flex">' + chainCard + safeCard + '</div>' + dutyCard + logCard + repCard;
   }
 
   function renderModels() {
@@ -786,10 +805,19 @@ img.avatar{border:1px solid var(--line);}
     /* DSH_ONLY_END */
 
     /* 2026-11-07 拆页：同一批设置卡按页签各拿各的，不再全堆在「设置」里划半天 */
+    /* 2026-11-09 补：网页版一直缺「安装按钮+进度条」（以前只有 DSH 内嵌版有），后端 /env/* 接口本来就在 */
+    var envJobCard = card('一键安装（Python 依赖 · 转写后端）', '装转写后端后，没字幕的视频也能听出内容；装完上面的开关才有意义', '',
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn primary sm" data-act="env-install" data-kind="auto">一键装好运行环境</button>' +
+      '<button class="btn ghost sm" data-act="env-install" data-kind="deps">只装 Python 依赖</button>' +
+      '<button class="btn ghost sm" data-act="env-install" data-kind="asr">装转写后端</button>' +
+      '</div>' +
+      '<div id="ej-box" style="margin-top:10px"><div class="note" style="margin:0">没有正在进行的安装任务</div></div>');
+
     var GROUPS = {
       find: kwCard + sourceCard + pick,
       settings: comment + dm + rep + visionCard + memCard,
-      env: env + adv + updCard + dshCard
+      env: env + envJobCard + adv + updCard + dshCard
     };
     var META = {
       find: ['找视频', '关键词、从哪捞片、每天挑几条 —— 找片相关的都在这'],
@@ -909,9 +937,34 @@ img.avatar{border:1px solid var(--line);}
     return genCard + genSetCard + autoCard + dynCard + vidCard + noteCard;
   }
 
+  /* ===== QQ 接入（遥控小门）独立页：2026-11-08 拆出来，找得到也管得住 ===== */
+  function renderQQ() {
+    var r = (st() && st().remote) || {};
+    var stat = r.on ? (r.listening ? '<span class="tag green">开着 · 监听中</span>' : '<span class="tag amber">开着 · 还没监听</span>') : '<span class="tag">关着</span>';
+    var body = card('QQ 接入（遥控小门）', '给 QQ 机器人（比如 AstrBot）留的一扇带口令的小门：只认白名单动作，外面碰不到你的密钥和配置', stat,
+      '<div class="note" style="margin:0 0 8px">' +
+      (r.on
+        ? esc('机器人隔着这扇门可以：看状态、问最近刷了啥、让它刷一轮、撤回误发的评论……共 ' + (r.actions || 0) + ' 个白名单动作。' + (r.readOnly ? '现在是「只看不干」模式：只能查，不能干活。' : ''))
+        : '关着时不监听任何端口。打开后，机器人就能隔着门看状态、命令刷视频（要口令）。') +
+      (r.error ? ('<br><span style="color:var(--amber-tx)">启动失败：' + esc(r.error) + '</span>') : '') +
+      (r.listening && (r.urls || []).length ? ('<br>本机：127.0.0.1:' + esc(String(r.port || '')) + ' · 局域网：' + esc(r.urls.join('　'))) : '') +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn ' + (r.on ? 'ghost' : 'primary') + ' sm" data-act="qq-toggle">' + (r.on ? '关掉小门' : '打开小门') + '</button>' +
+      (r.on ? '<button class="btn ghost sm" data-act="qq-readonly">' + (r.readOnly ? '关掉「只看不干」（允许干活）' : '设为「只看不干」') + '</button>' : '') +
+      '</div>');
+    var secret = card('口令与地址（给机器人插件填）', '两样东西填进 AstrBot 的桥接插件就能用；同一台机器填 127.0.0.1 那个地址最稳', '',
+      '<div style="font-family:ui-monospace,monospace;font-size:13px;white-space:pre-wrap;word-break:break-all">口令：' + esc(r.token || '（打开小门后自动生成一把）') + '\n门卫地址：' + (r.listening ? ('http://127.0.0.1:' + esc(String(r.port || '8792'))) : '（门没开）') + ((r.urls || []).length ? ('\n局域网地址：' + esc(r.urls.join('　'))) : '') + '</div>' +
+      (r.token ? '<div style="margin-top:8px"><button class="btn ghost sm" data-act="qq-copytoken">复制口令</button></div>' : '') +
+      '<div class="note" style="margin-top:8px">⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。</div>');
+    var acts = card('门里允许干什么（白名单）', '改配置、拿密钥这类事，门里根本没有对应动作', '',
+      '<div class="note" style="margin:0">看状态 · 看最近刷的视频 · 看发过的评论/动态 · 看日报 · 命令刷一轮 · 试跑（只挑不发） · 停止 · 发动态 · 查回私信 · 撤回最近几条评论</div>');
+    return body + secret + acts;
+  }
+
   var RENDER = {
     overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
-    chain: renderChain, safety: renderSafety, publish: renderPublish,
+    chain: renderChain, safety: renderSafety, publish: renderPublish, qq: renderQQ,
     // 这三个页签共用同一批设置卡，renderSettings 内部按 S.page 各拿各的
     find: renderSettings, settings: renderSettings, env: renderSettings
   };
@@ -949,6 +1002,44 @@ img.avatar{border:1px solid var(--line);}
       day.addEventListener('change', function () { save('apPerDay', Math.max(1, Number(day.value) || 2)); });
     }
     if (q && !(document.activeElement && q.contains(document.activeElement))) renderAutoQueue();
+    // 自动值守：时段/数字输入绑定（只在改动时保存）
+    var dmode = $('#duty-mode');
+    if (dmode && !dmode.dataset.bound) {
+      dmode.dataset.bound = '1';
+      dmode.addEventListener('change', function () { save('scheduleMode', dmode.value, '跑的时段'); });
+    }
+    [['duty-start', 'activeStart'], ['duty-end', 'activeEnd'], ['duty-perday', 'perDay'], ['duty-gap', 'roundIntervalMinutes']].forEach(function (p) {
+      var el = $('#' + p[0]);
+      if (el && !el.dataset.bound) {
+        el.dataset.bound = '1';
+        el.addEventListener('change', function () { save(p[1], p[1] === 'perDay' || p[1] === 'roundIntervalMinutes' ? Math.max(1, Number(el.value) || (p[1] === 'perDay' ? 6 : 5)) : el.value, '自动值守'); });
+      }
+    });
+    // 环境安装进度：只在环境页轮询，更新进度条和日志（不整页重绘，免得闪）
+    var ej = $('#ej-box');
+    if (ej) {
+      if (S._ejTimer && S._ejPage !== S.page) { clearInterval(S._ejTimer); S._ejTimer = null; }
+      if (!S._ejTimer) {
+        S._ejPage = S.page;
+        S._ejTimer = setInterval(function () {
+          if (S.page !== 'env' || !$('#ej-box')) { clearInterval(S._ejTimer); S._ejTimer = null; return; }
+          get('/env/job').then(function (r) {
+            var j = r && r.job ? r.job : r; var box = $('#ej-box'); if (!box || !j) return;
+            var html = '';
+            if (j.phase === 'idle' && !j.running) { html = '<div class="note" style="margin:0">没有正在进行的安装任务</div>'; }
+            else {
+              var pct = Math.max(0, Math.min(100, Number(j.pct) || 0));
+              html += '<div style="height:10px;background:var(--line);border-radius:6px;overflow:hidden">' +
+                '<div style="height:100%;width:' + pct + '%;background:var(--blue);transition:width .4s"></div></div>';
+              html += '<div class="note" style="margin:6px 0 0">' + esc((j.kind || '') + ' · ' + (j.error ? ('出错：' + j.error) : (j.done ? '完成了' : (j.running ? '进行中 ' + pct + '%' : '已结束')))) + '</div>';
+              if (j.log && j.log.length) html += '<div style="margin-top:6px;font-family:ui-monospace,monospace;font-size:11.5px;color:var(--t2);white-space:pre-wrap;max-height:150px;overflow:auto">' + esc(j.log.join('\n')) + '</div>';
+              if (j.done || j.error) html += '<div style="margin-top:8px"><button class="btn ghost sm" data-act="reload">装完了，刷新看看</button></div>';
+            }
+            box.innerHTML = html;
+          }).catch(function () {});
+        }, 2000);
+      }
+    }
   }
 
   function renderAutoQueue() {
@@ -1024,10 +1115,34 @@ img.avatar{border:1px solid var(--line);}
     if (act === 'dshpush') return post('/dsh/push', {})
       .then(function (r) { toast(r.ok ? '已发进会话（去会话列表找「刷B站」）' : ('没发出去：' + (r.error || '未知'))); setTimeout(refresh, 800); })
       .catch(function (e) { toast('请求失败：' + e.message); });
+    if (act === 'qq-toggle') {
+      var rr = (st() && st().remote) || {};
+      return post('/remote/config', { remoteOn: !rr.on })
+        .then(function () { toast('已保存，几秒内生效'); setTimeout(refresh, 1200); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
+    }
+    if (act === 'qq-readonly') {
+      var r2 = (st() && st().remote) || {};
+      return post('/remote/config', { remoteReadOnly: !r2.readOnly })
+        .then(function () { toast('已保存'); setTimeout(refresh, 800); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
+    }
+    if (act === 'qq-copytoken') {
+      var tk = ((st() && st().remote) || {}).token || '';
+      try { navigator.clipboard.writeText(tk); toast('口令已复制'); } catch (e) { toast('复制失败，手动选中有'); }
+      return;
+    }
     if (act === 'upcheck') return post('/update/check', { force: true })
       .then(function (r) { toast(r.hasUpdate ? ('发现新版本 v' + (r.latest || '？')) : '已经是最新版'); setTimeout(refresh, 600); })
       .catch(function (e) { toast('检查失败：' + e.message); });
 
+    if (act === 'env-install') {
+      var kind = t.dataset.kind || 'auto';
+      toast('开始安装（' + kind + '），进度在下方卡片里');
+      return post('/env/install', { kind: kind })
+        .then(function (r) { if (!r || !r.ok) toast('没启动起来：' + ((r && r.error) || '未知')); setTimeout(refresh, 600); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
+    }
     if (act === 'set') {
       var key = t.dataset.key, val = t.dataset.val === '1';
       if (key === 'contextMode') return save('contextMode', val ? 'thread' : 'isolated', '上下文设置');
