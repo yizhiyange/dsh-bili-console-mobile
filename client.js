@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const PAGE_ORDER = [
       ['overview', '总览'], ['find', '找视频'], ['models', '模型与密钥'], ['logs', '专业日志'],
       ['persona', '人设'], ['chain', '降级链'], ['safety', '安全防护'],
-      ['comments', '评论'], ['publish', '发布'], ['settings', '设置'], ['env', '环境与更新'],
+      ['comments', '评论'], ['publish', '发布'], ['qq', 'QQ 接入'], ['settings', '设置'], ['env', '环境与更新'],
     ]
 
     const API = '/api/bili-console'
@@ -3347,9 +3347,53 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doVideo }, '启动投稿'))))
       }
 
+      /* ===== QQ 接入（遥控小门）：独立顶层页（2026-11-08 用户要求从环境页拆出来） ===== */
+      function renderQQ() {
+        const r = state?.remote || {}
+        const saveRemote = async (patch) => {
+          try { await jpost('/remote/config', patch); toast_(r.on ? '已保存，几秒内生效' : '已保存，正在开门…') }
+          catch (e) { toast_('没保存上：' + (e?.message || e)) }
+        }
+        const copyToken = () => {
+          try { navigator.clipboard.writeText(r.token || ''); toast_('口令已复制') }
+          catch { toast_('复制失败，手动选中口令复制吧') }
+        }
+        return h('div', {},
+          Card({
+            title: 'QQ 接入（遥控小门）',
+            sub: '给 QQ 机器人（比如 AstrBot）留的一扇带口令的小门：只认白名单动作，外面碰不到你的密钥和配置',
+            right: Tag({ c: r.on ? (r.listening ? 'green' : 'amber') : 'gray', children: r.on ? (r.listening ? '开着 · 监听中' : '开着 · 还没监听') : '关着' }),
+          },
+            h('div', { 'data-qq-sum': '', style: { fontSize: '13px', lineHeight: 1.7 } },
+              r.on
+                ? ('机器人隔着这扇门可以：看状态、问最近刷了啥、让它刷一轮、撤回误发的评论……共 ' + (r.actions || 0) + ' 个白名单动作。' +
+                  (r.readOnly ? '现在是「只看不干」模式：只能查，不能干活。' : '') +
+                  (r.error ? ('\n启动失败：' + r.error) : ''))
+                : '关着时不监听任何端口。打开后，机器人就能隔着门看状态、命令刷视频（要口令）。',
+              r.listening && (r.urls || []).length ? ('\n\n本机可用：127.0.0.1:' + (r.port || '') + '；局域网：' + r.urls.join('、')) : ''),
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
+              h('button', { className: r.on ? 'ghost sm' : 'primary sm', onClick: () => saveRemote({ remoteOn: !r.on }) },
+                r.on ? '关掉小门' : '打开小门'),
+              r.on ? h('button', { className: 'ghost sm', onClick: () => saveRemote({ remoteReadOnly: !r.readOnly }) },
+                r.readOnly ? '关掉「只看不干」（允许干活）' : '设为「只看不干」') : null)),
+          Card({ title: '口令与地址（给机器人插件填）', sub: '两样东西填进 AstrBot 的桥接插件就能用；同一台机器填 127.0.0.1 那个地址最稳' },
+            h('div', { style: { fontFamily: 'ui-monospace, monospace', fontSize: '13px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' } },
+              '口令：' + (r.token || '（打开小门后自动生成一把）') + '\n' +
+              '门卫地址：' + (r.listening ? ('http://127.0.0.1:' + (r.port || '8792')) : '（门没开）') +
+              ((r.urls || []).length ? ('\n局域网地址：' + r.urls.join('　')) : '')),
+            r.token ? h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px' } },
+              h('button', { className: 'ghost sm', onClick: copyToken }, '复制口令')) : null,
+            h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
+              '⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。')),
+          Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
+            h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
+              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论'].join(' · '))))
+      }
+
       const PAGERENDER = {
         overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
         chain: renderChain, safety: renderSafety, comments: renderComments, publish: renderPublish,
+        qq: renderQQ,
         // 这三个页面共用同一批「设置类卡片」，只是各拿各的那几张
         find: () => renderSettings('find'),
         settings: () => renderSettings('settings'),
