@@ -43,7 +43,7 @@ import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } fro
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
 import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode, warningsFor, adjustmentsFor } from './lib/automode.mjs'
-import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones } from './lib/bili.mjs'
+import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones, searchVideos } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
@@ -1778,6 +1778,23 @@ export function apply(ctx, _config) {
       })()
       return sendJson(res, 200, { ok: true, started: true, message: '已开始「为所欲为」一轮，去总览看活动流' })
     }
+    // ---- 搜视频：按关键词搜 B站（给 QQ/群友用；只读动作，只看不干模式也放行）----
+    if (req.method === 'POST' && path === '/search') {
+      const b = await readBody(req)
+      const q = String(b.q ?? b.keyword ?? b.query ?? '').trim().slice(0, 60)
+      if (!q) return sendJson(res, 200, { ok: false, error: '缺关键词（q）' })
+      if (!loginStatus(home).loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B站' })
+      let cli = null
+      try {
+        cli = newClient(loadConfig(home), home)
+        const raw = await searchVideos(cli, q, Math.max(3, Math.min(20, Number(b.n) || 8)))
+        const items = normalizeSearchItems(raw).slice(0, 20)
+        logLine(home, `搜视频「${q}」：${items.length} 条`)
+        return sendJson(res, 200, { ok: true, q, count: items.length, items })
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: String(e?.message ?? e).slice(0, 160) })
+      } finally { try { cli && cli.close() } catch { /* noop */ } }
+    }
     // ---- 撤回：把 AI 自己发出去的内容删掉 ----
     if (req.method === 'GET' && path === '/posted') {
       return sendJson(res, 200, { ok: true, items: listPosts(home, 50), ...postedStats(home) })
@@ -2277,6 +2294,33 @@ async function fetchMe(home) {
 /* ---------- 小工具 ---------- */
 
 /** 给前端的设置：脱掉内部字段，绝不外泄任何密钥内容 */
+/**
+ * 把 bili_search 的各种返回形状统一成 [{bvid,title,author,play,review,duration}]。
+ * python 那边目前返回 {items:[...]}，但历史上也见过数组 / data.list，全兼容，别到时候搜到却解析不出来。
+ */
+function normalizeSearchItems(raw) {
+  let list = []
+  if (Array.isArray(raw)) list = raw
+  else if (raw && Array.isArray(raw.videos)) list = raw.videos   // ← python 实际返回的是这个（{keyword,count,videos}）
+  else if (raw && Array.isArray(raw.items)) list = raw.items
+  else if (raw && raw.data && Array.isArray(raw.data.list)) list = raw.data.list
+  else if (raw && Array.isArray(raw.result)) list = raw.result
+  else if (typeof raw === 'string') {
+    try { return normalizeSearchItems(JSON.parse(raw)) } catch { return [] }
+  }
+  return list
+    .filter((x) => x && typeof x === 'object')
+    .map((x) => ({
+      bvid: String(x.bvid || x.bv || ''),
+      title: String(x.title || x.name || '').replace(/<[^>]+>/g, '').slice(0, 80),
+      author: String(x.author || (x.owner && x.owner.name) || x.up || '').slice(0, 30),
+      play: Number(x.play ?? x.view ?? 0) || 0,
+      review: Number(x.review ?? x.comment ?? 0) || 0,
+      duration: String(x.duration || ''),
+    }))
+    .filter((x) => x.bvid)
+}
+
 function safeSettings(cfg) {
   const out = {}
   for (const k of Object.keys(cfg)) {
