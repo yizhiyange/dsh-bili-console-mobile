@@ -3403,7 +3403,9 @@ window.__ModuleLoader__.load({
             r.token ? h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px' } },
               h('button', { className: 'ghost sm', onClick: copyToken }, '复制口令')) : null,
             h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
-              '⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。')),
+              '⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。'),
+            h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)' } },
+              '怎么接？仓库的 integrations/ 里有现成的：AstrBot 插件、MCP 适配器（qq-bridge / SnowLuma 等）、以及纯 HTTP 示例——照着填口令就行，不用另装服务。')),
           Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
             h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
               ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论'].join(' · '))))

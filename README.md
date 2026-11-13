@@ -79,6 +79,18 @@ dsh plugin --profile web add link:<本仓库的解压目录>
 
 > 说明：网页版（`web/console.html`，原生 JS）和 DSH 面板（`client.js`，React）是两套渲染，但**共用同一套接口**（`/state`、`/settings`、`/run/*` …）。改功能改后端即可，两边都会生效；新增界面控件需要两边各加一次。
 
+## 接进 QQ 群（让机器人会刷B站）
+
+想让群里那个机器人「知道自己在刷B站、能按关键词搜视频、被喊一句就去野一轮」？**不用另装服务**——门卫是插件自带的：
+
+1. 面板 →「QQ 接入」→ 打开小门，抄下口令和地址；
+2. 从 [`integrations/`](./integrations/) 里挑一条路：
+   - **AstrBot**：[`integrations/astrbot/`](./integrations/astrbot/)（放插件目录 + 填口令，纯标准库）
+   - **qq-bridge / SnowLuma / 任意 MCP 宿主**：[`integrations/qqbridge/`](./integrations/qqbridge/)（`mcp-bili.js`，11 个 B站 工具）
+   - **自己写机器人**：门卫就是普通 HTTP（`POST /cmd` + `X-Bili-Token`），任何语言都能接，见 [`integrations/README.md`](./integrations/README.md)
+
+默认是「只看不干」：机器人只能查、不能发。要让它能干活（发评论/发动态/野一轮），把「只看不干」关掉。
+
 
 ## 可选能力：转写 / 识图 / 收藏
 

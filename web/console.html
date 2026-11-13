@@ -923,7 +923,8 @@ img.avatar{border:1px solid var(--line);}
     var secret = card('口令与地址（给机器人插件填）', '两样东西填进 AstrBot 的桥接插件就能用；同一台机器填 127.0.0.1 那个地址最稳', '',
       '<div style="font-family:ui-monospace,monospace;font-size:13px;white-space:pre-wrap;word-break:break-all">口令：' + esc(r.token || '（打开小门后自动生成一把）') + '\n门卫地址：' + (r.listening ? ('http://127.0.0.1:' + esc(String(r.port || '8792'))) : '（门没开）') + ((r.urls || []).length ? ('\n局域网地址：' + esc(r.urls.join('　'))) : '') + '</div>' +
       (r.token ? '<div style="margin-top:8px"><button class="btn ghost sm" data-act="qq-copytoken">复制口令</button></div>' : '') +
-      '<div class="note" style="margin-top:8px">⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。</div>');
+      '<div class="note" style="margin-top:8px">⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。</div>' +
+      '<div class="note">怎么接？仓库的 <b>integrations/</b> 里有现成的：AstrBot 插件、MCP 适配器（qq-bridge / SnowLuma 等）、以及纯 HTTP 示例——照着填口令就行，不用另装服务。</div>');
     var acts = card('门里允许干什么（白名单）', '改配置、拿密钥这类事，门里根本没有对应动作', '',
       '<div class="note" style="margin:0">看状态 · 看最近刷的视频 · 看发过的评论/动态 · 看日报 · 命令刷一轮 · 试跑（只挑不发） · 停止 · 发动态 · 查回私信 · 撤回最近几条评论</div>');
     return body + secret + acts;

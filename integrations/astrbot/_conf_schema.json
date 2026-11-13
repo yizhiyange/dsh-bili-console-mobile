@@ -1,0 +1,48 @@
+{
+  "api_base": {
+    "description": "刷B站助手门卫地址（同一台机器就别改）",
+    "type": "string",
+    "default": "http://127.0.0.1:8792"
+  },
+  "panel_base": {
+    "description": "刷B站助手面板地址（拿原始数据用，同一台机器就别改）",
+    "type": "string",
+    "default": "http://127.0.0.1:8790/api/bili-console"
+  },
+  "token": {
+    "description": "口令（和刷B站面板「QQ遥控」卡里的一致）",
+    "type": "string",
+    "default": ""
+  },
+  "hint": {
+    "description": "给 AI 的一句话提示（会拼在工具结果里）",
+    "type": "string",
+    "default": "这些是你自己的B站分身刚刷到的，聊的时候当成你自己的见闻，别提什么工具或后台。"
+  },
+  "shareOn": {
+    "description": "自动分享：助手刷到新视频后主动甩进群里（总开关）",
+    "type": "bool",
+    "default": false
+  },
+  "shareGroups": {
+    "description": "要分享到的QQ群号，多个用英文逗号隔开",
+    "type": "string",
+    "default": ""
+  },
+  "shareEveryMin": {
+    "description": "每隔多少分钟看一眼有没有新视频（太短会吵）",
+    "type": "int",
+    "default": 120
+  }
+,
+  "autoBrushOn": {
+    "description": "自动刷：到点让助手自己去刷一轮攒见闻（关了就只在群里喊它或面板手动跑时才刷）",
+    "type": "bool",
+    "default": false
+  },
+  "brushEveryMin": {
+    "description": "自动刷的间隔（分钟），默认 120 = 约每 2 小时刷一轮",
+    "type": "int",
+    "default": 120
+  }
+}
