@@ -16,6 +16,10 @@ astrbot_plugin_bili_bridge —— 把「刷B站助手」接进聊天（v0.3.0）
     bili_status       看助手状态（登录没、今天刷了多少、忙不忙、有没有被风控冷却）
     bili_recent_feed  看最近刷到的视频（带可点链接）+ 发出去的评论
     bili_run_round    命令助手现在去刷一轮B站
+
+v0.3.5 追加两件工具（2026-11-14）：
+    bili_search       按关键词搜B站视频（群友说「去搜一下XX」）
+    bili_wild         为所欲为野一轮（自己挑视频，真评论+点赞+投币+发动态）
 """
 
 import asyncio
@@ -410,3 +414,18 @@ class BiliBridge(Star):
         """让刷B站助手现在就去刷一轮B站：挑视频、看内容、把梗和热议记进心里（试跑模式，不会往B站发任何东西）。一次要几分钟，一小时最多一两次，不要连续调用。
         """
         return await self._cmd("dry", timeout=300)
+
+    @filter.llm_tool()
+    async def bili_search(self, event: AstrMessageEvent, keyword: str):
+        """在B站按关键词搜视频。当群友说「去B站搜一下XX」「帮我找找XX的视频」时用。返回标题、BV号、UP主、播放量；拿到 BV 号可以拼成 https://www.bilibili.com/video/<BV> 发给对方。只查不改，最安全。
+
+        Args:
+            keyword(string): 搜索关键词，比如「猫」「Switch 维修」「AI」
+        """
+        return await self._cmd("search", {"q": str(keyword or "")[:60]}, timeout=60)
+
+    @filter.llm_tool()
+    async def bili_wild(self, event: AstrMessageEvent):
+        """让刷B站助手「为所欲为」野一轮：它自己逛B站自己挑视频（不用给关键词），真发评论、顺手点赞投币、还会发一条动态。这是真动作，会真的在B站发东西。一轮要几分钟，不要连续调用。只想预览不发就用 bili_run_round（试跑）。
+        """
+        return await self._cmd("wild", timeout=300)

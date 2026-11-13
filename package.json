@@ -1,6 +1,6 @@
 {
   "name": "dsh-bili-console",
-  "version": "0.3.80",
+  "version": "0.3.81",
   "description": "DSH 插件：刷B站 · 双模控制台 —— 每天替你刷一轮 B站，读字幕挑值得的、写日报；网页控制台 + DSH 设置界面双操控，一个包装着两边",
   "keywords": [
     "dsh",

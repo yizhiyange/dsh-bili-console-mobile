@@ -1,5 +1,5 @@
 name: astrbot_plugin_bili_bridge
 desc: 把刷B站助手接进聊天——让 AI 能看最近刷到的视频、发的评论，也能命令它现在去刷一轮
-version: v0.3.4
+version: v0.3.5
 author: yizhiyange
 repo: https://github.com/yizhiyange/dsh-bili-console
