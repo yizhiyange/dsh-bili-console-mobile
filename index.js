@@ -583,6 +583,8 @@ export function apply(ctx, _config) {
   let roundRunning = false          // 防止手动轮次与定时轮次叠跑
   let stopRequested = false         // 用户点了「停止」：下一处检查点就退出
   let roundLabel = ''               // 当前在跑哪种轮次（手动/试跑/定时），给界面显示
+  let wildRunning = false           // 为所欲为（wild）轮次独立锁，不跟定时/手动轮次冲突
+  let stopWild = false              // 为所欲为轮次的停止信号
   /**
    * DSH 能力探头：只看**我们主动点名的这几个**服务对象上有哪些方法名。
    *
@@ -780,7 +782,12 @@ export function apply(ctx, _config) {
       }
       if ('remoteHost' in b) patch.remoteHost = ['0.0.0.0', '127.0.0.1'].includes(String(b.remoteHost)) ? String(b.remoteHost) : '0.0.0.0'
       if ('remoteToken' in b) patch.remoteToken = String(b.remoteToken || '').trim().slice(0, 128)
-      const changed = saveConfig(home, patch)
+      // 独立版(standalone)把遥控配置写进 DSH 的家目录：真正监听 8792 的门卫是 DSH 进程起的，
+      // 配置必须落在它读的那份文件里，独立版自己"关小门 / 切只读"才会真的生效，而不是写进隔离副本石沉大海
+      const remoteCfgHome = process.env.BILI_STANDALONE
+        ? (process.env.BILI_STANDALONE_DSH_HOME || join(homedir(), '.dsh', 'bili-console'))
+        : home
+      const changed = saveConfig(remoteCfgHome, patch)
       // 立刻生效，不等 5 秒轮询；current() 会在第一次开启时自动铸口令
       try { remoteCtl?.sync() } catch {}
       return sendJson(res, 200, { ok: true, changed, ...(remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)) })
@@ -1722,8 +1729,9 @@ export function apply(ctx, _config) {
     // ---- Phase 2：立即跑一轮 / 私信监察（后台跑，避免 HTTP 超时）----
     // 停止当前轮次：不掐进程，只是让它在下一个检查点收手（不会发到一半）
     if (req.method === 'POST' && path === '/run/stop') {
-      if (!roundRunning) return sendJson(res, 200, { ok: true, stopped: false, message: '当前没有在跑的轮次' })
+      if (!roundRunning && !wildRunning) return sendJson(res, 200, { ok: true, stopped: false, message: '当前没有在跑的轮次' })
       stopRequested = true
+      stopWild = true
       logLine(home, '收到「停止」请求：这一轮会在下一个检查点停下（正在做的这一条会做完，不会发半句）')
       return sendJson(res, 200, { ok: true, stopped: true, message: '已请求停止，正在收尾' })
     }
@@ -1746,6 +1754,29 @@ export function apply(ctx, _config) {
         finally { roundRunning = false }
       })()
       return sendJson(res, 200, { ok: true, started: true, message: dryRun ? '已开始试跑（只挑不发），去"总览"看活动流' : '已开始，去"总览"看活动流' })
+    }
+    // ---- 为所欲为（wild）：手动/QQ 触发一轮，自己逛 B站 想干啥干啥 ----
+    if (req.method === 'POST' && path === '/run/wild') {
+      if (wildRunning) return sendJson(res, 200, { ok: true, started: false, message: '上一轮野路子还在跑，稍等' })
+      wildRunning = true
+      stopWild = false
+      const c = loadConfig(home)
+      ;(async () => {
+        try {
+          await ensureVenv(cfg, home, (m) => logLine(home, m))
+          const s = await runRound({
+            home, wild: true, force: false, dryRun: false,
+            shouldStop: () => stopWild,
+            hostModels: extractHostModels(),
+            cfgOverride: { perDay: Number(c.wildPerDay) || 20, commentPerRound: Math.max(1, Number(c.wildPerRound) || 5) },
+            log: (m) => logLine(home, m),
+          })
+          logLine(home, `为所欲为（手动/QQ）：${JSON.stringify(s)}`)
+          await maybePushRound(home, s)
+        } catch (e) { logLine(home, `为所欲为（手动/QQ）异常：${e?.message || e}`) }
+        finally { wildRunning = false }
+      })()
+      return sendJson(res, 200, { ok: true, started: true, message: '已开始「为所欲为」一轮，去总览看活动流' })
     }
     // ---- 撤回：把 AI 自己发出去的内容删掉 ----
     if (req.method === 'GET' && path === '/posted') {
@@ -2004,8 +2035,13 @@ export function apply(ctx, _config) {
 
     // QQ 遥控门卫：默认关。开了才另起一个带口令的小端口，只认白名单动作；
     // 关着的时候一个端口都不监听，电脑版原有行为不变。
+    // 独立版(standalone)运行时：门卫由 DSH 进程独占监听 8792，这里只把遥控配置
+    // 共享到 DSH 的 home（~/.dsh/bili-console），自己不再监听端口，避免和 DSH 抢端口——
+    // 这样独立版面板也能真正开关那扇门，又不会两套门卫打架。
     try {
-      remoteCtl = startRemote({ home, handle, log: (m) => logLine(home, m) })
+      const remoteHome = process.env.BILI_STANDALONE ? (process.env.BILI_STANDALONE_DSH_HOME || join(homedir(), '.dsh', 'bili-console')) : home
+      const noListen = !!process.env.BILI_STANDALONE
+      remoteCtl = startRemote({ home: remoteHome, handle, log: (m) => logLine(home, m), noListen })
       ctx.effect(() => remoteCtl.stop, 'bili-console: QQ 遥控门卫')
     } catch (e) { log(`QQ 遥控没起来（不影响主功能）：${e?.message ?? e}`) }
 
@@ -2121,6 +2157,48 @@ export function apply(ctx, _config) {
       return () => clearInterval(scheduler)
     }, 'bili-console: 值守调度')
   } catch (e) { log(`值守调度没起：${e?.message ?? e}`) }
+
+  //   ②½ 为所欲为（wild）模式：独立循环，开关在「为所欲为」页。
+  //   开了就自己逛 B站（首页推荐流）、自己评论/点赞/投币/发动态，直到关掉。
+  //   与定时值守完全独立：互不抢锁、互不抢额度；受「总停 autoDutyOn」和「风控冷却」约束。
+  try {
+    ctx.effect(() => {
+      const t = setInterval(async () => {
+        try {
+          const c = loadConfig(home)
+          if (!c.wildMode) return
+          if (!loginStatus(home).loggedIn) return
+          // 总停（autoDutyOn=false）一并关掉野路子——它是「一键急停」
+          if (c.autoDutyOn === false) return
+          // 风控冷却中就不凑热闹（野路子照样受冷却约束，防封号）
+          if (new Cooldown(home).active()) return
+          // 间隔（默认 10 分钟，可调 wildInterval 1~240）
+          const gap = Math.max(1, Number(c.wildInterval) || 10)
+          const stt = loadState(home)
+          if (stt.lastWildMs && Date.now() - Number(stt.lastWildMs) < gap * 60000) return
+          if (wildRunning) return
+          wildRunning = true
+          stopWild = false
+          try {
+            const s = await runRound({
+              home, wild: true, force: false, dryRun: false,
+              shouldStop: () => stopWild,
+              hostModels: extractHostModels(),
+              cfgOverride: { perDay: Number(c.wildPerDay) || 20, commentPerRound: Math.max(1, Number(c.wildPerRound) || 5) },
+              log: (m) => logLine(home, m),
+            })
+            logLine(home, `为所欲为轮次：${JSON.stringify(s)}`)
+            await maybePushRound(home, s)
+            stt.lastWildMs = Date.now()
+            try { saveState(home, stt) } catch {}
+          } catch (e) { logLine(home, `为所欲为轮次异常：${e?.message || e}`) }
+          finally { wildRunning = false }
+        } catch (e) { log(`为所欲为调度异常：${e?.message || e}`) }
+      }, 60 * 1000)
+      if (t.unref) t.unref()
+      return () => clearInterval(t)
+    }, 'bili-console: 为所欲为调度')
+  } catch (e) { log(`为所欲为调度没起：${e?.message ?? e}`) }
 
   //   ③ 自动发视频调度：每 60 秒看一眼（开关默认关；全自动 / 人工审核见 lib/autopublish.mjs）
   try {

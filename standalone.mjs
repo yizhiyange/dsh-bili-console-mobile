@@ -107,6 +107,9 @@ function releaseLock() {
 process.env.BILI_STANDALONE = '1'
 // 让 dshcfg 的 dshHome() 指到一个空目录 → 扫不到任何 profile → 永远提取不到 DSH 模型
 process.env.DSH_HOME = join(APP_ROOT, '_no_dsh')
+// 把 DSH 那边的家目录告诉 index.js：独立版的遥控配置直接共享到 DSH 的 home，
+// 因为真正监听 8792 的门卫是 DSH 进程起的，独立版自己只管写配置（见 index.js）
+process.env.BILI_STANDALONE_DSH_HOME = DSH_HOME
 
 migrateOnce()
 acquireLock()

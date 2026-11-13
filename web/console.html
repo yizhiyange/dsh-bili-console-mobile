@@ -252,6 +252,7 @@ img.avatar{border:1px solid var(--line);}
       <button class="pill" data-page="duty">挂机</button>
       <button class="pill" data-page="publish">发布</button>
       <button class="pill" data-page="qq">QQ 接入</button>
+      <button class="pill" data-page="wild">为所欲为</button>
       <button class="pill" data-page="settings">设置</button>
       <button class="pill" data-page="env">环境与更新</button>
       <div class="side-spacer"></div>
@@ -272,6 +273,7 @@ img.avatar{border:1px solid var(--line);}
       <section class="page" id="page-duty"></section>
       <section class="page" id="page-publish"></section>
       <section class="page" id="page-qq"></section>
+      <section class="page" id="page-wild"></section>
       <section class="page" id="page-settings"></section>
       <section class="page" id="page-env"></section>
     </div>
@@ -931,7 +933,26 @@ img.avatar{border:1px solid var(--line);}
   function renderDuty() {
     var c = cfg(), cg = cfg();
     var dutyOn = c.autoDutyOn !== false;
-
+    var modeSel = '<select id="duty-mode" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px">' +
+      [['any','全天 7×24'],['window','自定义时段'],['valley','只在官方谷时']].map(function (o) {
+        return '<option value="' + o[0] + '"' + ((c.scheduleMode || 'any') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+      }).join('') + '</select>';
+    var presetRow = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+      [['safe','稳妥（3条/60分）','3','2','60','20'],['balanced','平衡（6条/30分）','6','3','30','30'],['aggressive','激进（12条/15分）','12','5','15','60']].map(function (p) {
+        return '<button class="btn ghost sm" data-act="duty-preset" data-pd="' + p[2] + '" data-pc="' + p[3] + '" data-pg="' + p[4] + '" data-ps="' + p[5] + '">' + p[1] + '</button>';
+      }).join('') + '</div>';
+    var dutyCard = card('自动值守（挂机跑轮次）', '到点自己挑视频、看内容；「自动评论」关着时只挑不发', dutyOn ? '<span class="tag green">开着</span>' : '<span class="tag">关着</span>',
+      toggleRow('自动值守总开关', '关掉后到点也不跑轮次；群里喊它「去刷一轮」和手动跑不受影响', dutyOn, 'autoDutyOn') +
+      (dutyOn
+        ? (presetRow +
+           setRow('跑的时段', '全天 / 自定义起止 / 只在官方谷时（夜间流量便宜）', modeSel) +
+           ((c.scheduleMode || 'any') === 'window'
+             ? '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">从 <input type="time" id="duty-start" value="' + esc(c.activeStart || '09:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"> 到 <input type="time" id="duty-end" value="' + esc(c.activeEnd || '23:00') + '" style="height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 6px"></div>'
+             : '') +
+           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;align-items:center">每天上限 <input type="number" id="duty-perday" value="' + esc(String(c.perDay != null ? c.perDay : 6)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 条 · 两轮间隔 <input type="number" id="duty-gap" value="' + esc(String(c.roundIntervalMinutes != null ? c.roundIntervalMinutes : 5)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 分钟</div>' +
+           '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;align-items:center">每轮发 <input type="number" id="duty-cpr" value="' + esc(String(c.commentPerRound != null ? c.commentPerRound : 3)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 条 · 每轮看 <input type="number" id="duty-scan" value="' + esc(String(c.scanPerRound != null ? c.scanPerRound : 0)) + '" style="width:70px;height:32px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--t1);padding:0 8px"> 条（0=默认）</div>' +
+           '<div class="note" style="margin-top:6px">QQ 桥的「自动刷见闻」也在这个开关之下；两项共用同一份判重表，不会重复挑。</div>')
+        : '<div class="note" style="margin-top:6px">现在是纯手动模式：群里喊它、或总览的手动按钮，它才动。</div>'));
 
     var commentCard = card('评论与互动', '', '',
       toggleRow('自动评论并 @', '开着才会真发评论；关了就只挑不发，不打扰任何人', !!c.autoComment, 'autoComment') +
@@ -962,9 +983,34 @@ img.avatar{border:1px solid var(--line);}
     return dutyCard + commentCard + autoBrushCard + autoCard;
   }
 
+  /* ===== 为所欲为（wild）：独立页（2026-11-13 新增）=====
+   * 打开 = 全自动自己逛 B站（首页推荐流自己挑，不靠关键词），评论/点赞/投币/发动态，直到关掉。
+   * 与 QQ 遥控的「为所欲为」不同：QQ 那边有人下令才动。 */
+  function renderWild() {
+    var c = cfg(), g = st().guardian || {};
+    var on = !!c.wildMode;
+    var masterCard = card('为所欲为模式', '打开它就自己逛 B站：自己挑视频、自己评论/点赞/投币/发动态，直到你关掉',
+      on ? '<span class="tag red">野着跑中</span>' : '<span class="tag">关着</span>',
+      '<div class="note" style="margin-top:0">不用你给关键词，直接逛首页推荐流自己挑；挑中就评论，顺手点赞+投币（受每日投币上限），还会发一条图文动态。保险在后台定死了：触发风控冷却就停手、每天有总量上限、每条都记进「评论」和日报；挂机页的「自动值守总开关」一关，它也跟着停。</div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">' +
+      '<button class="btn ' + (on ? 'ghost' : 'danger') + ' sm" data-act="set" data-key="wildMode" data-val="' + (on ? '0' : '1') + '">' + (on ? '关掉为所欲为' : '打开为所欲为（开始野）') + '</button>' +
+      '<button class="btn outline sm" data-act="wild-run">立即来一发（只野一轮）</button>' +
+      '<button class="btn ghost sm" data-act="wild-stop">停止</button></div>' +
+      '<div class="note" style="margin-top:8px">⚠️ 打开 = 真的发评论/动态、真投币。频率越高越容易被 B站 限流；真被风控会自动冷却 24 小时' + (g.active ? ('。当前风控冷却中（还剩约 ' + (g.remainingMin || 0) + ' 分钟），它不会乱动') : '') + '。</div>');
+    var paceCard = card('野的节奏', '默认值是替你定好的保险参数，想调也行，别调太疯', '',
+      setRow('每天最多挑几条', '全天总量，挑满就收工', stepperHTML('wildPerDay', c.wildPerDay || 20, '条')) +
+      setRow('每轮挑几条', '一轮里最多挑几条', stepperHTML('wildPerRound', c.wildPerRound || 5, '条')) +
+      setRow('两轮之间隔多久', '太密容易触发风控', stepperHTML('wildInterval', c.wildInterval || 10, '分钟')));
+    var qqCard = card('QQ 里的「为所欲为」是另一回事', '同一个引擎，两种玩法', '',
+      '<div class="note" style="margin-top:0">· 这页的开关：打开 = 它全自动自己野，除非你关掉。</div>' +
+      '<div class="note">· QQ 里喊它「为所欲为」：有人下令才动，野一轮就收；没人叫它，它自己不会动（最多按定时值守的节奏跑）。</div>' +
+      '<div class="note">· QQ 门卫开着「只看不干」时，喊它干活也没用——得先去「QQ 接入」把只读关掉。</div>');
+    return masterCard + paceCard + qqCard;
+  }
+
   var RENDER = {
     overview: renderOverview, models: renderModels, logs: renderLogs, persona: renderPersona,
-    chain: renderChain, safety: renderSafety, duty: renderDuty, publish: renderPublish, qq: renderQQ,
+    chain: renderChain, safety: renderSafety, duty: renderDuty, publish: renderPublish, qq: renderQQ, wild: renderWild,
     // 这三个页签共用同一批设置卡，renderSettings 内部按 S.page 各拿各的
     find: renderSettings, settings: renderSettings, env: renderSettings
   };
@@ -985,7 +1031,12 @@ img.avatar{border:1px solid var(--line);}
     renderTop();
     var fn = RENDER[S.page] || renderOverview;
     var el = $('#page-' + S.page);
-    el.innerHTML = fn();
+    try { el.innerHTML = fn(); }
+    catch (e) {
+      el.innerHTML = '<div class="card"><b style="color:var(--amber-tx)">这个页面渲染出错了（其它页不受影响）</b>' +
+        '<div class="note" style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11.5px;white-space:pre-wrap">' +
+        esc(String((e && (e.stack || e.message)) || e)) + '</div></div>';
+    }
     var ae = document.activeElement;
     if (ae && ae.dataset && ae.dataset.draft) {
       var again = $('[data-draft="' + ae.dataset.draft + '"]');
@@ -1008,11 +1059,11 @@ img.avatar{border:1px solid var(--line);}
       dmode.dataset.bound = '1';
       dmode.addEventListener('change', function () { save('scheduleMode', dmode.value, '跑的时段'); });
     }
-    [['duty-start', 'activeStart'], ['duty-end', 'activeEnd'], ['duty-perday', 'perDay'], ['duty-gap', 'roundIntervalMinutes']].forEach(function (p) {
+    [['duty-start', 'activeStart'], ['duty-end', 'activeEnd'], ['duty-perday', 'perDay'], ['duty-gap', 'roundIntervalMinutes'], ['duty-cpr', 'commentPerRound'], ['duty-scan', 'scanPerRound']].forEach(function (p) {
       var el = $('#' + p[0]);
       if (el && !el.dataset.bound) {
         el.dataset.bound = '1';
-        el.addEventListener('change', function () { save(p[1], p[1] === 'perDay' || p[1] === 'roundIntervalMinutes' ? Math.max(1, Number(el.value) || (p[1] === 'perDay' ? 6 : 5)) : el.value, '自动值守'); });
+        el.addEventListener('change', function () { save(p[1], p[1] === 'scanPerRound' ? Math.max(0, Number(el.value) || 0) : (p[1] === 'perDay' || p[1] === 'roundIntervalMinutes' || p[1] === 'commentPerRound' ? Math.max(1, Number(el.value) || 1) : el.value), '自动值守'); });
       }
     });
     // 环境安装进度：只在环境页轮询，更新进度条和日志（不整页重绘，免得闪）
@@ -1136,6 +1187,13 @@ img.avatar{border:1px solid var(--line);}
       .then(function (r) { toast(r.hasUpdate ? ('发现新版本 v' + (r.latest || '？')) : '已经是最新版'); setTimeout(refresh, 600); })
       .catch(function (e) { toast('检查失败：' + e.message); });
 
+    if (act === 'duty-preset') {
+      var pd = Math.max(1, Number(t.dataset.pd) || 6), pc = Math.max(1, Number(t.dataset.pc) || 3);
+      var pg = Math.max(1, Number(t.dataset.pg) || 30), ps = Math.max(0, Number(t.dataset.ps) || 0);
+      return post('/settings', { perDay: pd, commentPerRound: pc, roundIntervalMinutes: pg, scanPerRound: ps })
+        .then(function (r) { toast(r && r.ok ? ('已套用档位：每天 ' + pd + ' 条 / 间隔 ' + pg + ' 分钟') : '保存失败'); setTimeout(refresh, 600); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
+    }
     if (act === 'env-install') {
       var kind = t.dataset.kind || 'auto';
       toast('开始安装（' + kind + '），进度在下方卡片里');
@@ -1151,6 +1209,17 @@ img.avatar{border:1px solid var(--line);}
     if (act === 'step') {
       var k2 = t.dataset.key, d = Number(t.dataset.d) || 0;
       return save(k2, Math.max(0, Number(c[k2] || 0) + d));
+    }
+    if (act === 'wild-run') {
+      toast('已开始「为所欲为」一轮，去总览看活动流');
+      return post('/run/wild', {})
+        .then(function (r) { if (r && r.started === false) toast('没开始：' + ((r && r.message) || '上一轮还在跑')); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
+    }
+    if (act === 'wild-stop') {
+      return post('/run/stop', {})
+        .then(function (r) { toast((r && r.message) || '已叫停'); })
+        .catch(function (e) { toast('请求失败：' + e.message); });
     }
     if (act === 'lv') { S.logLv = t.dataset.lv; return paint(); }
     if (act === 'setdm') return save('dmMode', t.dataset.v, '私信投递');
