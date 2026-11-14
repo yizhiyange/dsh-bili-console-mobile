@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 /**
- * doctor.mjs —— 部署体检（不是逻辑自测，逻辑自测见 selfcheck.mjs）
+ * doctor.mjs —— 部署体检 + 多栈适配（不是逻辑自测，逻辑自测见 selfcheck.mjs）
  * ============================================================================
  * 它只回答一个问题：**为什么 QQ 遥控不通／插件明明装了却不干活**。
  *
  * 用法：
- *   node doctor.mjs            体检本机
- *   node doctor.mjs --scan     顺便扫一遍局域网，看哪台机器开着 8792
- *   node doctor.mjs --json     机器可读输出（给面板/脚本用）
+ *   node doctor.mjs                     自动识别本机是哪套组合
+ *   node doctor.mjs --stack dsh         DSH 插件模式（本地/桌面版）
+ *   node doctor.mjs --stack qqbridge    DSH + qq-bridge（NapCat）
+ *   node doctor.mjs --stack snowluma    SnowLuma 当 QQ 协议端
+ *   node doctor.mjs --stack astrbot     AstrBot 当机器人
+ *   node doctor.mjs --stack standalone  独立面板模式
+ *   node doctor.mjs --scan              顺便扫局域网，看哪台机器开着 8792
+ *   node doctor.mjs --json              机器可读（给面板/脚本用）
  *
- * 它检查的四件事：
- *   1. 五个端口谁活着（8792 门卫 / 3080 DSH Web / 3100 qq-bridge / 6099 NapCat / 8790 独立面板）
- *   2. 口令文件在不在（只报长度，绝不打印明文）
- *   3. 每个 DSH 档案（profile）里到底有没有装本插件
- *   4. 当前真正在跑的 DSH 是哪个档案 + 门卫能不能应答
- *
- * 常见结论「装了却不干活」的根因就一条：插件装在 A 档案，服务跑的是 B 档案。
- * DSH 的插件是按档案加载的，两边不共享 —— 装对了不等于装对了地方。
+ * 设计原则：
+ *   1. 8792 门卫是**唯一硬指标**——不管是 AstrBot、SnowLuma、qq-bridge 还是裸 HTTP，
+ *      三种接入最后都是 POST 8792/cmd，带同一个口令。它不通，刷B站遥控就一定是死的。
+ *   2. 上层框架的端口只是"参考信息"，缺了不算故障。别人用 AstrBot 就没有 3100，
+ *      标成 ❌ 只会误导，所以一律标 `—` 并说明"本方案可选"。
+ *   3. 只给命令，不自动执行。自动改 profile、重启服务风险太大，判断错了会把别人的机器人搞停。
  * ============================================================================
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -27,20 +30,47 @@ import net from 'node:net'
 const ARGS = process.argv.slice(2)
 const DO_SCAN = ARGS.includes('--scan')
 const AS_JSON = ARGS.includes('--json')
+const STACK_ARG = (() => {
+  const i = ARGS.indexOf('--stack')
+  return i >= 0 && ARGS[i + 1] ? ARGS[i + 1].trim().toLowerCase() : 'auto'
+})()
 
+// 端口字典：role 决定它属于哪套方案
 const PORTS = [
-  { port: 8792, name: 'QQ 遥控门卫', key: 'gate' },
-  { port: 3080, name: 'DSH Web', key: 'dshweb' },
-  { port: 3100, name: 'qq-bridge', key: 'qqbridge' },
-  { port: 6099, name: 'NapCat', key: 'napcat' },
-  { port: 8790, name: '独立面板', key: 'panel' }
+  { port: 8792, role: 'core', name: 'QQ 遥控门卫' },
+  { port: 3080, role: 'dsh', name: 'DSH Web' },
+  { port: 8790, role: 'panel', name: '独立面板' },
+  { port: 3100, role: 'qqbridge', name: 'qq-bridge' },
+  { port: 6185, role: 'astrbot', name: 'AstrBot 控制台' },
+  { port: 3001, role: 'ws', name: 'SnowLuma / NapCat WS' },
+  { port: 6099, role: 'napcat', name: 'NapCat WebUI' }
 ]
+
+const STACKS = {
+  auto: { label: '自动识别', roles: PORTS.map((p) => p.role) },
+  dsh: { label: 'DSH 插件模式', roles: ['core', 'dsh', 'panel'] },
+  qqbridge: { label: 'DSH + qq-bridge（NapCat）', roles: ['core', 'dsh', 'qqbridge', 'napcat', 'ws', 'panel'] },
+  snowluma: { label: 'SnowLuma 当协议端', roles: ['core', 'ws', 'napcat', 'qqbridge'] },
+  astrbot: { label: 'AstrBot 当机器人', roles: ['core', 'astrbot', 'napcat', 'ws'] },
+  standalone: { label: '独立面板模式', roles: ['core', 'panel'] }
+}
+
+const STACK_HINTS = {
+  astrbot: 'AstrBot 侧：astrbot_plugin_bili_bridge 只负责转发，它自己不提供 8792；指到 8792 + 填对 token 即可。',
+  qqbridge: 'qq-bridge 侧：mcp-bili.js 会自动读 ~/.dsh/bili-console/config.json 的口令，别手动填错。',
+  snowluma: 'SnowLuma 侧：WS 地址要和 qq-bridge 的 config.json 对上（默认 3001）。',
+  dsh: 'DSH 侧：插件必须挂进「实际在跑的那个档案」，光装进另一个档案不会加载。',
+  standalone: '独立面板侧：面板(8790)被硬编码成 noListen，永远不会开 8792；QQ 遥控仍要插件提供。'
+}
 
 const CONFIG_PATHS = [
   join(homedir(), '.dsh', 'bili-console', 'config.json'),
   join(homedir(), '.bili-console-app', 'bili-console', 'config.json'),
   join(homedir(), 'bili-console', 'config.json')
 ]
+
+const line = (s = '') => console.log(s)
+const mark = (b) => (b ? '✅' : '❌')
 
 function readJson(p) {
   try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null }
@@ -83,15 +113,13 @@ function listProfiles() {
     out.push({
       name,
       installed: Object.keys(deps).some((k) => /bili-console/.test(k)),
-      inBundles: bundles.some((b) => /bili-console/.test(b)),
-      bundles
+      inBundles: bundles.some((b) => /bili-console/.test(b))
     })
   }
   return out
 }
 
 function runningDsh() {
-  // Linux：直接从 /proc 读启动参数；Windows 没有 /proc，跳过（不影响端口与档案检查）
   if (!existsSync('/proc')) return []
   const out = []
   for (const pid of readdirSync('/proc')) {
@@ -101,7 +129,7 @@ function runningDsh() {
     if (!cmd) continue
     if (!/deepseek-harness|dsh-desktop-host|dsh\/cli/i.test(cmd)) continue
     const m = cmd.match(/--profile\s+([\w.-]+)/)
-    out.push({ pid, profile: m ? m[1] : '(未指定，通常是 desktop)', cmd: cmd.slice(0, 200) })
+    out.push({ pid, profile: m ? m[1] : '(未指定，通常是 desktop)' })
   }
   return out
 }
@@ -122,8 +150,7 @@ async function askGate(token) {
 }
 
 function lanBase() {
-  const ifs = networkInterfaces()
-  for (const list of Object.values(ifs)) {
+  for (const list of Object.values(networkInterfaces())) {
     for (const i of list || []) {
       if (i.family === 'IPv4' && !i.internal) return i.address.split('.').slice(0, 3).join('.')
     }
@@ -145,14 +172,21 @@ async function scanLan(base) {
   return hits.sort((a, b) => Number(a.split('.')[3]) - Number(b.split('.')[3]))
 }
 
-const line = (s = '') => console.log(s)
-const mark = (b) => (b ? '✅' : '❌')
-
 async function main() {
+  const stackName = STACKS[STACK_ARG] ? STACK_ARG : 'auto'
+  if (stackName !== STACK_ARG) {
+    line(`⚠️ 不认识 --stack ${STACK_ARG}，可选：${Object.keys(STACKS).join(' / ')}`)
+  }
+  const stack = STACKS[stackName]
+
   const result = {
+    stack: stackName,
+    stackLabel: stack.label,
     platform: process.platform,
     node: process.version,
     ports: {},
+    notApplicable: [],
+    upstream: [],
     config: {},
     profiles: [],
     running: [],
@@ -161,16 +195,27 @@ async function main() {
   }
 
   line('')
-  line('刷B站 · 部署体检')
+  line(`刷B站 · 部署体检    方案：${stack.label}（--stack ${stackName}）`)
   line(`平台 ${process.platform} · Node ${process.version}`)
-  line('─'.repeat(52))
+  line('─'.repeat(56))
 
-  // 1) 端口
+  // 1) 端口：本方案内的真检查，方案外的一律标 —
   line('【1】端口')
   for (const p of PORTS) {
+    const inStack = stack.roles.includes(p.role)
+    if (!inStack) {
+      result.notApplicable.push(p.port)
+      line(`  —  ${String(p.port).padEnd(5)} ${p.name}（本方案不检查）`)
+      continue
+    }
     const up = await probe('127.0.0.1', p.port)
-    result.ports[p.key] = up
-    line(`  ${mark(up)} ${String(p.port).padEnd(5)} ${p.name}`)
+    result.ports[p.port] = up
+    // auto 模式下"没探到"不等于"坏了"：可能是压根没装这套。非核心端口一律标 —，避免吓人。
+    const soft = stackName === 'auto' && p.role !== 'core' && !up
+    const tag = p.role === 'core' ? '  ← 硬指标' : ''
+    const head = up ? '✅' : (soft ? '—' : '❌')
+    const tail = soft ? '（未检测到，可选）' : ''
+    line(`  ${head} ${String(p.port).padEnd(5)} ${p.name}${tail}${tag}`)
   }
 
   // 2) 口令
@@ -187,7 +232,7 @@ async function main() {
   line('【3】DSH 档案（插件按档案加载，互不共享）')
   const profiles = listProfiles()
   result.profiles = profiles
-  if (!profiles.length) line('  ⚠️ 没找到 ~/.dsh/profiles，可能没装 DSH 或家目录不同')
+  if (!profiles.length) line('  ⚠️ 没找到 ~/.dsh/profiles（没装 DSH 或家目录不同；用 AstrBot 的人可能是这种情况）')
   for (const p of profiles) {
     const good = p.installed && p.inBundles
     line(`  ${mark(good)} ${p.name.padEnd(8)} 依赖${p.installed ? '有' : '无'} / bundles${p.inBundles ? '有' : '无'}`)
@@ -198,16 +243,16 @@ async function main() {
   line('【4】正在运行的 DSH')
   const running = runningDsh()
   result.running = running
-  if (!running.length) line('  （本机查不到 DSH 进程；Windows 上属正常，可直接看端口结论）')
+  if (!running.length) line('  （本机没查到 DSH 进程；Windows 上没有 /proc，属正常，看端口结论即可）')
   for (const r of running) line(`  pid ${r.pid} → 档案 ${r.profile}`)
 
   // 5) 门卫应答
   line('')
-  line('【5】门卫应答')
-  if (!result.ports.gate) {
+  line('【5】门卫应答（核心）')
+  if (!result.ports[8792] && stack.roles.includes('core')) {
     line('  ❌ 8792 没监听，命令发不进去')
   } else if (!token) {
-    line('  ⚠️ 8792 开着但没有口令，无法验证')
+    line('  ⚠️ 没有口令，无法验证应答')
   } else {
     const r = await askGate(token)
     result.gatekeeper = r
@@ -220,10 +265,28 @@ async function main() {
     }
   }
 
-  // 6) 局域网扫描（可选）
+  // 6) 上游框架（仅供参考）
+  line('')
+  line('【6】上游框架（仅供参考，缺了不算故障）')
+  const upstreamMap = [
+    { port: 3100, name: 'qq-bridge' },
+    { port: 6185, name: 'AstrBot' },
+    { port: 3001, name: 'SnowLuma' },
+    { port: 6099, name: 'NapCat WebUI' },
+    { port: 3080, name: 'DSH Web' }
+  ]
+  for (const u of upstreamMap) {
+    const up = await probe('127.0.0.1', u.port, 900)
+    if (up) result.upstream.push({ port: u.port, name: u.name })
+    line(`  ${up ? '✅' : '—'} ${String(u.port).padEnd(5)} ${u.name}`)
+  }
+  const detected = result.upstream.map((u) => u.name)
+  line(`  检测到的上游：${detected.length ? detected.join('、') : '无（可能只装了 AstrBot 且没开控制台，或纯 HTTP 直连）'}`)
+
+  // 7) 局域网扫描
   if (DO_SCAN) {
     line('')
-    line('【6】局域网扫描 8792')
+    line('【7】局域网扫描 8792')
     const base = lanBase()
     if (!base) {
       line('  ⚠️ 没有可用的局域网 IPv4 地址，跳过')
@@ -236,39 +299,47 @@ async function main() {
     }
   }
 
-  // 7) 结论
+  // 8) 结论
   line('')
-  line('─'.repeat(52))
-  const gateUp = !!result.ports.gate
+  line('─'.repeat(56))
+  const gateUp = !!result.ports[8792] || !stack.roles.includes('core')
   const gateOk = result.gatekeeper && result.gatekeeper.status === 200
-  const liveProfiles = running.map((r) => r.profile)
   const armed = profiles.filter((p) => p.installed && p.inBundles).map((p) => p.name)
-  const missingInLive = liveProfiles.filter((n) => n !== '(未指定，通常是 desktop)' && n !== 'desktop' && !armed.includes(n))
+  const liveProfiles = running.map((r) => r.profile)
+  const liveWithoutPlugin = liveProfiles.filter((n) => {
+    const short = n.replace('(未指定，通常是 desktop)', 'desktop')
+    return !armed.includes(short)
+  })
 
-  if (gateUp && gateOk) {
+  if (gateOk) {
     result.verdict = '链路正常：门卫在监听且能应答，QQ 遥控可用。'
     line(`✅ ${result.verdict}`)
-    if (missingInLive.length) {
-      line(`   提示：当前在跑的档案 ${missingInLive.join('、')} 里没有装本插件，` +
-           '门卫是被别的进程占着的。以后这个进程重启，门卫可能跟着消失。')
+    if (liveWithoutPlugin.length) {
+      line(`   提示：在跑的档案 ${liveWithoutPlugin.join('、')} 里没装本插件，门卫是被别的进程占着的；` +
+           '那个进程重启后门卫可能消失。')
     }
-  } else if (!gateUp && armed.length && missingInLive.length) {
-    result.verdict = `装错口袋：插件装在 ${armed.join('、')} 档案，但在跑的是 ${missingInLive.join('、')}。`
+  } else if (!result.ports[8792] && armed.length && liveWithoutPlugin.length) {
+    result.verdict = `装错口袋：插件装在 ${armed.join('、')}，在跑的是 ${liveWithoutPlugin.join('、')}。`
     line(`❌ ${result.verdict}`)
-    line(`   修：dsh plugin --profile ${missingInLive[0]} add link:<插件目录>`)
-    line(`   然后重启那个档案的服务（例如 sudo systemctl restart dsh-web）`)
-  } else if (!gateUp && armed.length) {
-    result.verdict = `插件已挂进 ${armed.join('、')}，但门卫没开：要么那个进程没跑，要么 remoteOn=false。`
+    line(`   修：dsh plugin --profile ${liveWithoutPlugin[0]} add link:<插件目录>`)
+    line('   然后重启那个档案的服务（例如 sudo systemctl restart dsh-web）')
+  } else if (!result.ports[8792] && armed.length) {
+    result.verdict = `插件已挂进 ${armed.join('、')}，但门卫没开：那个进程没跑，或者 remoteOn=false。`
     line(`❌ ${result.verdict}`)
-    line('   修：先看【4】里那个档案的进程在不在；在的话去面板把「QQ 接入」小门打开')
-  } else if (!gateUp) {
+    line('   修：先看【4】的进程在不在；在的话去面板把「QQ 接入」小门打开')
+  } else if (!result.ports[8792]) {
     result.verdict = '门卫没开，且没有任何档案装了本插件。'
     line(`❌ ${result.verdict}`)
-    line('   修：先装插件到「实际在跑的那个档案」，再重启对应服务')
+    line('   修：先把插件装到「实际在跑的那个档案」，再重启对应服务')
   } else {
     result.verdict = '8792 在监听但不应答，可能是别的东西占了这个端口。'
     line(`❌ ${result.verdict}`)
     line('   修：ss -ltnp | grep 8792 看是谁占的；确认是本插件后重启对应服务')
+  }
+
+  if (STACK_HINTS[stackName]) {
+    line('')
+    line(`小贴士（${stack.label}）：${STACK_HINTS[stackName]}`)
   }
 
   if (AS_JSON) {
