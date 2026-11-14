@@ -19,10 +19,10 @@ astrbot_plugin_bili_bridge —— 把「刷B站助手」接进聊天（v0.3.0）
 
 v0.3.5 追加两件工具（2026-11-14）：
     bili_search       按关键词搜B站视频（群友说「去搜一下XX」）
-    bili_wild         为所欲为野一轮（自己挑视频，真评论+点赞+投币+发动态）
+    bili_wild         为所欲为野一轮（自己挑视频，真评论+点赞+发动态；投币不代投）
 bili_like         给指定 BV 点赞
-bili_coin         给指定 BV 投币（1~2 枚）
-bili_triple       给指定 BV 一键三连（赞+币+收藏）
+bili_coin         给指定 BV 记一笔「待手动投币」提醒（不代投：B站要人机验证）
+bili_triple       给指定 BV 一键三连（赞+藏；币不代投，如实报❌）
 bili_comment      给指定 BV 发一条评论（内容由你写）
 """
 
@@ -430,7 +430,7 @@ class BiliBridge(Star):
 
     @filter.llm_tool()
     async def bili_wild(self, event: AstrMessageEvent):
-        """让刷B站助手「为所欲为」野一轮：它自己逛B站自己挑视频（不用给关键词），真发评论、顺手点赞投币、还会发一条动态。这是真动作，会真的在B站发东西。一轮要几分钟，不要连续调用。只想预览不发就用 bili_run_round（试跑）。
+        """让刷B站助手「为所欲为」野一轮：它自己逛B站自己挑视频（不用给关键词），真发评论、顺手点赞、还会发一条动态（投币不代投）。这是真动作，会真的在B站发东西。一轮要几分钟，不要连续调用。只想预览不发就用 bili_run_round（试跑）。
         """
         return await self._cmd("wild", timeout=300)
 
@@ -444,18 +444,17 @@ class BiliBridge(Star):
         return await self._cmd("like", {"bvid": str(bvid or "")}, timeout=30)
 
     @filter.llm_tool()
-    async def bili_coin(self, event: AstrMessageEvent, bvid: str, num: int = 1):
-        """给群友点名的这一条B站视频投币（1 或 2 枚，默认 1）。会真的花掉这个账号的硬币，只在对方明确要求时才用。
+    async def bili_coin(self, event: AstrMessageEvent, bvid: str):
+        """投币（2026-11-14 起不代投）：B站对投币要二级人机验证，插件过不了也不该去绕。调用它不会花任何硬币，只会把这条视频记进面板的「待手动投币」提醒，并把链接回给群友自己去投。
 
         Args:
             bvid(string): BV 号，或者包含 BV 号的链接 / 整句话
-            num(number): 投几枚，1 或 2，默认 1
         """
-        return await self._cmd("coin", {"bvid": str(bvid or ""), "num": int(num or 1)}, timeout=30)
+        return await self._cmd("coin", {"bvid": str(bvid or ""), "from": "qq"}, timeout=30)
 
     @filter.llm_tool()
     async def bili_triple(self, event: AstrMessageEvent, bvid: str):
-        """对指定视频一键三连：点赞 + 投币 + 收藏。真动作，会同时改点赞、硬币、收藏夹；只在群友明确说「三连」时用。
+        """对指定视频一键三连：点赞 + 收藏。投币不代投（B站要人机验证），会顺手记一笔「待手动投币」，回包里的币那格永远是❌——如实报，别当成功。只在群友明确说「三连」时用。
 
         Args:
             bvid(string): BV 号，或者包含 BV 号的链接 / 整句话

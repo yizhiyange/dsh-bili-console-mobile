@@ -2553,14 +2553,40 @@ window.__ModuleLoader__.load({
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每轮最多评论'), h('div', { 'data-bd-ds': '' }, '一轮里最多发几条；超出自动暂停，防止刷太猛被盯上')),
             Stepper({ value: (cfg.commentPerRound || 0) + ' 条', onStep: (d) => step('commentPerRound', d, ' 条') })),
           ToggleRow({ label: '点赞（值得看）', note: '发完评论后，评级是「值得看」就顺手点个赞。不增加评论数，但让账号更像真人', on: !!cfg.autoLike, onChange: (v) => saveOne('autoLike', v) }),
-          ToggleRow({ label: '投币（值得看）', note: '会花掉你自己账号的硬币，所以默认关、每天有上限。打开后只给「值得看」投 1 个', on: !!cfg.autoCoin, onChange: (v) => saveOne('autoCoin', v) }),
           h('div', { 'data-bd-setrow': '' },
-            h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每天最多投几个币'), h('div', { 'data-bd-ds': '' }, '防止一口气把币花光；默认 2 个')),
-            Stepper({ value: (cfg.coinPerDay || 0) + ' 个', onStep: (d) => step('coinPerDay', d, ' 个') })),
+            h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '投币：不代投，只记提醒'),
+              h('div', { 'data-bd-ds': '' }, 'B站对「投币」这个动作要二级人机验证（-401 非法访问 / -403 账号异常），插件过不了也不该去绕。所以投币改成了提醒：群友点名「投币 BV号」只会在下面记一笔，你自己在 B站 App 投完，回来点「我投好了」',  ))),
           ToggleRow({ label: '回复评论', note: '别人回复你的评论时，它接一句（每轮最多「每轮回复几条」条）。不保存上下文时它只看到对方那一句；想让它记得来龙去脉，到「设置 → 上下文与记忆」打开保留上下文', on: !!cfg.replyToComments, onChange: (v) => saveOne('replyToComments', v) }),
           h('div', { 'data-bd-setrow': '' },
             h('div', { 'data-bd-txt': '' }, h('div', { 'data-bd-lb': '' }, '每轮回复几条'), h('div', { 'data-bd-ds': '' }, '回评论的轮次上限；每条 100 字以内')),
             Stepper({ value: (cfg.replyPerRound || 0) + ' 条', onStep: (d) => step('replyPerRound', d, ' 条') }))))
+
+        /* 待手动投币：投币被 B站风控拦住之后，改成"记提醒、人来投" */
+        {
+          const box = h('div', { 'data-bd-coinlist': '', style: { fontSize: '12px', color: 'var(--t2)' } }, '点右边「刷新」看看有没有群友点名的投币提醒')
+          const refreshCoin = async () => {
+            box.textContent = '正在读…'
+            try {
+              const d = await jpost('/coin/pending', {})
+              const items = (d && d.items) || []
+              box.textContent = ''
+              if (!items.length) { box.textContent = '现在没有待投的，干净'; return }
+              for (const it of items) {
+                const when = String(it.at || '').replace('T', ' ').slice(0, 16)
+                box.appendChild(h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', padding: '6px 0', borderTop: '1px solid var(--line, #eee)' } },
+                  h('a', { href: 'https://www.bilibili.com/video/' + it.bvid, target: '_blank', rel: 'noreferrer', style: { fontWeight: '600' } }, it.bvid),
+                  h('span', {}, '来自 ' + (it.from || 'qq') + '，' + when),
+                  h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: async () => {
+                    try { await jpost('/coin/done', { bvid: it.bvid }); toast_('已划掉 ' + it.bvid); refreshCoin() }
+                    catch (e) { toast_('划不掉：' + (e && e.message ? e.message : e)) }
+                  } }, '我投好了')))
+              }
+            } catch (e) { box.textContent = '读不到：' + (e && e.message ? e.message : e) }
+          }
+          put(curGroup, Card({ title: '待手动投币（插件不代投）',
+            sub: '群友在 QQ 里点名「投币 BV号」时会记到这里。B站投币要人机验证，只能你自己在 App 里投，投完点一下划掉。',
+            right: h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: refreshCoin }, '刷新') }, box))
+        }
 
         curGroup = 'find'   // 回到「找视频」：挑几条、要不要转写都属于怎么找片
         /* 每天挑与转写 */

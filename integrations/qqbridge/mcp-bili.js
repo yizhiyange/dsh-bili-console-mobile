@@ -107,14 +107,14 @@ server.tool(
 
 server.tool(
   'bili_coin',
-  '给指定的这一条B站视频投币（1~2 枚，默认 1）。会真的花掉这个账号的硬币，只在群友明确要求时才用。',
-  { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句'), num: z.number().describe('投几枚，1 或 2，默认 1').optional() },
-  async ({ bvid, num }) => { try { return text(await cmd('coin', { bvid: String(bvid || ''), num: Number(num) || 1 }, 30000)); } catch (e) { return fail(e); } },
+  '投币（2026-11-14 起不代投）：B站对投币要二级人机验证，插件过不了也不该去绕。调用它不会花任何硬币，只会把这条视频记进面板的「待手动投币」提醒，并把链接回给群友自己去投。',
+  { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句') },
+  async ({ bvid }) => { try { return text(await cmd('coin', { bvid: String(bvid || ''), from: 'qq' }, 30000)); } catch (e) { return fail(e); } },
 );
 
 server.tool(
   'bili_triple',
-  '对指定视频一键三连：点赞 + 投币 + 收藏。这是真动作，会同时改点赞、硬币、收藏夹；只在群友明确说「三连」时用。',
+  '对指定视频一键三连：点赞 + 收藏。投币不代投（B站要人机验证），会顺手记一笔「待手动投币」，回包里的币那格永远是❌——如实报，别当成功。只在群友明确说「三连」时用。',
   { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句') },
   async ({ bvid }) => { try { return text(await cmd('triple', { bvid: String(bvid || '') }, 60000)); } catch (e) { return fail(e); } },
 );
@@ -138,7 +138,7 @@ server.tool(
 
 server.tool(
   'bili_wild',
-  '让刷B站分身「为所欲为」野一轮：它自己想搜什么就去B站搜什么（自己出关键词，不用你给），也翻首页推荐流；真发评论、顺手点赞投币、还会发一条动态。这是真动作，会真的在B站发东西；一轮要几分钟，别连着调。只想预览不发就用 bili_run_round（试跑）。',
+  '让刷B站分身「为所欲为」野一轮：它自己想搜什么就去B站搜什么（自己出关键词，不用你给），也翻首页推荐流；真发评论、顺手点赞、还会发一条动态。投币不代投（B站人机验证）。这是真动作，会真的在B站发东西；一轮要几分钟，别连着调。只想预览不发就用 bili_run_round（试跑）。',
   {},
   async () => { try { return text(await cmd('wild', {}, 300000)); } catch (e) { return fail(e); } },
 );
