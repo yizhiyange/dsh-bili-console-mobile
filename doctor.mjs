@@ -12,6 +12,8 @@
  *   node doctor.mjs --stack astrbot     AstrBot 当机器人
  *   node doctor.mjs --stack standalone  独立面板模式
  *   node doctor.mjs --scan              顺便扫局域网，看哪台机器开着 8792
+ *   node doctor.mjs --log               出一份体检包（口令自动抹掉，可直接发给人看）
+ *   node doctor.mjs --log 出问题.txt     体检包存到指定文件
  *   node doctor.mjs --json              机器可读（给面板/脚本用）
  *
  * 设计原则：
@@ -20,16 +22,23 @@
  *   2. 上层框架的端口只是"参考信息"，缺了不算故障。别人用 AstrBot 就没有 3100，
  *      标成 ❌ 只会误导，所以一律标 `—` 并说明"本方案可选"。
  *   3. 只给命令，不自动执行。自动改 profile、重启服务风险太大，判断错了会把别人的机器人搞停。
+ *   4. --log 出的包必定脱敏：口令、cookie、PAT 一律换成 <已隐藏>，可以放心贴到群里。
  * ============================================================================
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir, networkInterfaces } from 'node:os'
+import { existsSync, readFileSync, readdirSync, openSync, readSync, closeSync, statSync, writeFileSync } from 'node:fs'
+import { join, resolve, dirname } from 'node:path'
+import { homedir, networkInterfaces, hostname, platform, release } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import net from 'node:net'
 
 const ARGS = process.argv.slice(2)
 const DO_SCAN = ARGS.includes('--scan')
 const AS_JSON = ARGS.includes('--json')
+const LOG_IDX = ARGS.indexOf('--log')
+const DO_LOG = LOG_IDX >= 0
+const DO_PASTE = ARGS.includes('--paste')
+const LOG_PATH_ARG = (DO_LOG && ARGS[LOG_IDX + 1] && !ARGS[LOG_IDX + 1].startsWith('--')) ? ARGS[LOG_IDX + 1] : ''
 const STACK_ARG = (() => {
   const i = ARGS.indexOf('--stack')
   return i >= 0 && ARGS[i + 1] ? ARGS[i + 1].trim().toLowerCase() : 'auto'
@@ -69,7 +78,12 @@ const CONFIG_PATHS = [
   join(homedir(), 'bili-console', 'config.json')
 ]
 
-const line = (s = '') => console.log(s)
+const BUF = []
+const QUIET = DO_PASTE // --paste 只打那一段，方便整段复制
+const line = (s = '') => {
+  BUF.push(s)
+  if (!QUIET) console.log(s)
+}
 const mark = (b) => (b ? '✅' : '❌')
 
 function readJson(p) {
@@ -172,12 +186,53 @@ async function scanLan(base) {
   return hits.sort((a, b) => Number(a.split('.')[3]) - Number(b.split('.')[3]))
 }
 
+function pluginVersion() {
+  const cands = []
+  try { cands.push(join(dirname(fileURLToPath(import.meta.url)), 'package.json')) } catch {}
+  cands.push(join(homedir(), 'bili-console', 'package.json'))
+  cands.push(join(process.cwd(), 'package.json'))
+  for (const p of cands) {
+    const pkg = readJson(p)
+    if (pkg && pkg.name && /bili-console/.test(pkg.name) && pkg.version) return pkg.version
+  }
+  return '未知'
+}
+
+// 体检包要能发给人看，就必须先把敏感信息抹掉——口令、cookie、PAT 一律 <已隐藏>
+function redact(s) {
+  if (!s) return s
+  return String(s)
+    .replace(/("?(?:remoteToken|remote_token|token|password|passwd|apiKey|api_key|secret|cookie)"?\s*[:=]\s*)"?[^"\s,}]{4,}"?/gi, '$1 "<已隐藏>"')
+    .replace(/\b(SESSDATA|bili_jct|DedeUserID__ckMd5|DedeUserID|sid|access_key)=([^;,\s]*)/gi, '$1=<已隐藏>')
+    .replace(/(X-Bili-Token\s*[:=]\s*)\S+/gi, '$1<已隐藏>')
+    .replace(/\b(ghp_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|sk-[A-Za-z0-9]{10,})\b/g, '<已隐藏>')
+}
+
+function tailFile(p, maxLines = 40, maxBytes = 160000) {
+  try {
+    const st = statSync(p)
+    const start = Math.max(0, st.size - maxBytes)
+    const fd = openSync(p, 'r')
+    const buf = Buffer.alloc(st.size - start)
+    readSync(fd, buf, 0, buf.length, start)
+    closeSync(fd)
+    return buf.toString('utf8').split('\n').slice(-maxLines).join('\n')
+  } catch { return '' }
+}
+
+function svcLine(unit) {
+  if (process.platform !== 'linux') return ''
+  const r = spawnSync('systemctl', ['is-active', unit], { encoding: 'utf8', timeout: 4000 })
+  return `${unit}: ${(r.stdout || '').trim() || 'unknown'}`
+}
+
 async function main() {
   const stackName = STACKS[STACK_ARG] ? STACK_ARG : 'auto'
   if (stackName !== STACK_ARG) {
     line(`⚠️ 不认识 --stack ${STACK_ARG}，可选：${Object.keys(STACKS).join(' / ')}`)
   }
   const stack = STACKS[stackName]
+  const ver = pluginVersion()
 
   const result = {
     stack: stackName,
@@ -191,6 +246,9 @@ async function main() {
     profiles: [],
     running: [],
     gatekeeper: null,
+    code: '',
+    short: '',
+    fix: '',
     verdict: ''
   }
 
@@ -312,26 +370,43 @@ async function main() {
   })
 
   if (gateOk) {
+    result.code = 'E0'
+    result.short = '链路正常'
     result.verdict = '链路正常：门卫在监听且能应答，QQ 遥控可用。'
     line(`✅ ${result.verdict}`)
     if (liveWithoutPlugin.length) {
       line(`   提示：在跑的档案 ${liveWithoutPlugin.join('、')} 里没装本插件，门卫是被别的进程占着的；` +
            '那个进程重启后门卫可能消失。')
     }
-  } else if (!result.ports[8792] && armed.length && liveWithoutPlugin.length) {
-    result.verdict = `装错口袋：插件装在 ${armed.join('、')}，在跑的是 ${liveWithoutPlugin.join('、')}。`
+  } else if (result.ports[8792] && !token) {
+    result.code = 'E9'
+    result.short = '门卫开着但找不到口令'
+    result.verdict = '8792 在监听，但本机找不到 remoteToken，没法验证也不认命令。'
     line(`❌ ${result.verdict}`)
-    line(`   修：dsh plugin --profile ${liveWithoutPlugin[0]} add link:<插件目录>`)
+    line('   修：面板里看「QQ 接入」的口令，确认 config.json 里 remoteToken 和机器人那边填的一致')
+  } else if (!result.ports[8792] && armed.length && liveWithoutPlugin.length) {
+    result.code = 'E1'
+    result.short = '插件装错档案'
+    result.verdict = `装错口袋：插件装在 ${armed.join('、')}，在跑的是 ${liveWithoutPlugin.join('、')}。`
+    result.fix = `dsh plugin --profile ${liveWithoutPlugin[0]} add link:<插件目录>`
+    line(`❌ ${result.verdict}`)
+    line(`   修：${result.fix}`)
     line('   然后重启那个档案的服务（例如 sudo systemctl restart dsh-web）')
   } else if (!result.ports[8792] && armed.length) {
+    result.code = 'E2'
+    result.short = '插件挂好了但门卫没开'
     result.verdict = `插件已挂进 ${armed.join('、')}，但门卫没开：那个进程没跑，或者 remoteOn=false。`
     line(`❌ ${result.verdict}`)
     line('   修：先看【4】的进程在不在；在的话去面板把「QQ 接入」小门打开')
   } else if (!result.ports[8792]) {
+    result.code = 'E3'
+    result.short = '没装插件'
     result.verdict = '门卫没开，且没有任何档案装了本插件。'
     line(`❌ ${result.verdict}`)
     line('   修：先把插件装到「实际在跑的那个档案」，再重启对应服务')
   } else {
+    result.code = 'E4'
+    result.short = '8792 被占或不应答'
     result.verdict = '8792 在监听但不应答，可能是别的东西占了这个端口。'
     line(`❌ ${result.verdict}`)
     line('   修：ss -ltnp | grep 8792 看是谁占的；确认是本插件后重启对应服务')
@@ -342,9 +417,84 @@ async function main() {
     line(`小贴士（${stack.label}）：${STACK_HINTS[stackName]}`)
   }
 
+  // 9) 可复制的短结论：评论区不能传文件，只能贴字，所以这段必须短、必须不带口令
+  const portBits = PORTS.filter((p) => stack.roles.includes(p.role)).map((p) => {
+    const up = result.ports[p.port]
+    const soft = stackName === 'auto' && p.role !== 'core' && !up
+    return `${p.port}${up ? '✅' : (soft ? '—' : '❌')}`
+  }).join(' ')
+  const profBits = profiles.length
+    ? profiles.map((p) => `${p.name}${(p.installed && p.inBundles) ? '✅' : '❌'}`).join(' ')
+    : '无'
+  const liveBits = running.map((r) => r.profile).join(',') || '未查到'
+  const blockLines = [
+    `【刷B站·体检】v${ver}｜${process.platform}｜${stackName}`,
+    `${result.code} ${result.short}`,
+    `端口 ${portBits}`,
+    `口令 ${token ? token.length + '位' : '无'}｜档案 ${profBits}｜在跑 ${liveBits}`,
+    `应答 ${gateOk ? '正常' : '异常'}`
+  ]
+  if (result.fix) blockLines.push(`要跑的命令：${result.fix}`)
+  const block = blockLines.join('\n')
+
+  if (DO_PASTE) {
+    console.log(block)
+  } else if (result.code !== 'E0') {
+    line('')
+    line('──── 下面整段复制，贴评论区或私信就行（不含口令）────')
+    line(block)
+    line('──── 复制结束 ────')
+  }
+
   if (AS_JSON) {
     line('')
     line(JSON.stringify(result, null, 2))
+  }
+
+  // 10) 体检包：给能发文件的人（群、邮件、Issue）。评论区别贴整包，贴上面那段就够
+  if (DO_LOG) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const target = LOG_PATH_ARG
+      ? resolve(LOG_PATH_ARG)
+      : join(process.cwd(), `bili体检-${hostname()}-${stamp}.txt`)
+    const parts = []
+    parts.push('刷B站插件 · 部署体检包')
+    parts.push(`生成时间 ${new Date().toLocaleString()}　主机 ${hostname()}　系统 ${platform()} ${release()}　Node ${process.version}　插件 v${ver}`)
+    parts.push('本文件里的口令 / cookie / PAT 已自动替换为 <已隐藏>，可以直接发出去。')
+    parts.push('')
+    parts.push('===== 1) 体检结果 =====')
+    parts.push(BUF.join('\n'))
+    parts.push('')
+    parts.push('===== 2) 短结论（评论区可贴）=====')
+    parts.push(block)
+    const sections = [
+      ['3) 门卫日志 duty.log（最后 40 行）', join(homedir(), '.dsh', 'bili-console', 'duty.log'), 40],
+      ['4) qq-bridge 日志 bridge.log（最后 40 行）', join(homedir(), 'qq-bridge', 'bridge.log'), 40],
+      ['5) 群活动 qq-activity.log（最后 20 行）', join(homedir(), 'qq-bridge', 'state', 'qq-activity.log'), 20]
+    ]
+    for (const [title, p, n] of sections) {
+      parts.push('')
+      parts.push(`===== ${title} =====`)
+      const t = tailFile(p, n)
+      parts.push(t ? redact(t) : `（没读到 ${p}）`)
+    }
+    parts.push('')
+    parts.push('===== 6) 服务状态 =====')
+    if (process.platform === 'linux') {
+      for (const u of ['dsh-web', 'qqbridge', 'napcat', 'zhipu-pool', 'snowluma-autologin']) parts.push(svcLine(u))
+      const j = spawnSync('journalctl', ['-u', 'dsh-web', '-n', '30', '--no-pager'], { encoding: 'utf8', timeout: 6000 })
+      parts.push('--- dsh-web journal（最后 30 行）---')
+      parts.push(redact(((j.stdout || '') + (j.stderr || '')).trim() || '（读不到，可能没权限；有 sudo 就 sudo journalctl -u dsh-web -n 30）'))
+    } else {
+      parts.push('（非 Linux，跳过 systemd）')
+    }
+    try {
+      writeFileSync(target, redact(parts.join('\n')), 'utf8')
+      console.log(`\n📄 体检包已生成：${target}`)
+      console.log('   （口令/cookie/PAT 已隐去，发我就行）')
+    } catch (e) {
+      console.log('\n⚠️ 体检包写不出去：' + (e && e.message ? e.message : e))
+    }
   }
   line('')
 }
