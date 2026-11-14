@@ -23,6 +23,7 @@ v0.3.5 追加两件工具（2026-11-14）：
 bili_like         给指定 BV 点赞
 bili_coin         给指定 BV 投币（1~2 枚）
 bili_triple       给指定 BV 一键三连（赞+币+收藏）
+bili_comment      给指定 BV 发一条评论（内容由你写）
 """
 
 import asyncio
@@ -48,7 +49,7 @@ MIND_INJECT = (
 )
 
 
-@register("bili_bridge", "yizhiyange", "刷B站助手桥", "0.3.6")
+@register("bili_bridge", "yizhiyange", "刷B站助手桥", "0.3.7")
 class BiliBridge(Star):
     def __init__(self, context: Context, config=None):
         super().__init__(context)
@@ -460,3 +461,13 @@ class BiliBridge(Star):
             bvid(string): BV 号，或者包含 BV 号的链接 / 整句话
         """
         return await self._cmd("triple", {"bvid": str(bvid or "")}, timeout=60)
+
+    @filter.llm_tool()
+    async def bili_comment(self, event: AstrMessageEvent, bvid: str, text: str):
+        """给群友点名的这一条B站视频发一条评论。只在对方明确说「你评论一句」「说点什么」时用；评论内容由你来写，像普通观众随口一句，别写成官方稿。只动这一条，不顺带点赞投币。
+
+        Args:
+            bvid(string): BV 号，或者包含 BV 号的链接 / 整句话
+            text(string): 要发的评论正文，1~400 字
+        """
+        return await self._cmd("comment", {"bvid": str(bvid or ""), "text": str(text or "")[:400]}, timeout=60)

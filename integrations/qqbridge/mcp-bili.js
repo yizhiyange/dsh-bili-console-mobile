@@ -120,6 +120,16 @@ server.tool(
 );
 
 server.tool(
+  'bili_comment',
+  '给指定的这一条B站视频发一条评论。群友丢来 BV 号/链接说「你评论一句」「说点什么」时用；评论内容由你来写（像普通观众随口一句，别像官方稿）。只动这一条，不顺带点赞投币。',
+  {
+    bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句'),
+    text: z.string().describe('要发的评论正文，1~400 字'),
+  },
+  async ({ bvid, text: body }) => { try { return text(await cmd('comment', { bvid: String(bvid || ''), text: String(body || '').slice(0, 400) }, 60000)); } catch (e) { return fail(e); } },
+);
+
+server.tool(
   'bili_run_round',
   '让刷B站分身现在去刷一轮（试跑模式，不会往B站发任何东西）。一轮要几分钟，一小时最多一两次，别连着调。',
   {},
@@ -128,7 +138,7 @@ server.tool(
 
 server.tool(
   'bili_wild',
-  '让刷B站分身「为所欲为」野一轮：它自己逛B站自己挑视频（不用给关键词），真发评论、顺手点赞投币、还会发一条动态。这是真动作，会真的在B站发东西；一轮要几分钟，别连着调。只想预览不发就用 bili_run_round（试跑）。',
+  '让刷B站分身「为所欲为」野一轮：它自己想搜什么就去B站搜什么（自己出关键词，不用你给），也翻首页推荐流；真发评论、顺手点赞投币、还会发一条动态。这是真动作，会真的在B站发东西；一轮要几分钟，别连着调。只想预览不发就用 bili_run_round（试跑）。',
   {},
   async () => { try { return text(await cmd('wild', {}, 300000)); } catch (e) { return fail(e); } },
 );

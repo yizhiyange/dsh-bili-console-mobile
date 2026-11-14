@@ -3460,7 +3460,7 @@ window.__ModuleLoader__.load({
             })),
           Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
             h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
-              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/投币/三连'].join(' · '))))
+              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/投币/三连/评论'].join(' · '))))
       }
 
       /* ===== 为所欲为（wild）：独立顶层页（2026-11-13 新增） =====
@@ -3468,6 +3468,7 @@ window.__ModuleLoader__.load({
        * 与 QQ 遥控的「为所欲为」是两回事：QQ 那边是有人下令才动。 */
       function renderWild() {
         const on = !!cfg.wildMode
+        const selfSearch = cfg.wildSelfSearch !== false
         const perDay = Math.max(1, Number(cfg.wildPerDay) || 20)
         const perRound = Math.max(1, Number(cfg.wildPerRound) || 5)
         const gap = Math.max(1, Number(cfg.wildInterval) || 10)
@@ -3489,11 +3490,11 @@ window.__ModuleLoader__.load({
         return h('div', {},
           Card({
             title: '为所欲为模式',
-            sub: '打开它就自己逛 B站：自己挑视频、自己评论/点赞/投币/发动态，直到你关掉',
+            sub: '打开它就自己逛 B站：自己想搜什么就去搜、自己挑视频、自己评论/点赞/投币/发动态，直到你关掉',
             right: Tag({ c: on ? 'red' : 'gray', children: on ? '野着跑中' : '关着' }),
           },
             h('div', { 'data-bd-callout': '' },
-              '它怎么干活：不用你给关键词，直接逛首页推荐流自己挑；挑中就评论，顺手点赞+投币（受每日投币上限约束），还会发一条图文动态。',
+              '它怎么干活：不用你给关键词——每轮它自己出一批「今天想搜什么」，拿这些词去B站搜，同时也翻首页推荐流；挑中就评论，顺手点赞+投币（受每日投币上限约束），还会发一条图文动态。',
               '\n保险在后台定死了：触发风控冷却就停手、每天有总量上限、每条都记进「评论」页和日报；总览里的「自动值守总开关」一关，它也跟着停。'),
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
               h('button', {
@@ -3504,6 +3505,15 @@ window.__ModuleLoader__.load({
               }, on ? '关掉为所欲为' : '打开为所欲为（开始野）'),
               h('button', { 'data-bd-btn': '', className: 'outline sm', onClick: runWildOnce }, '立即来一发（只野一轮）'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: stopAll }, '停止')),
+            h('div', { 'data-bd-setrow': '' },
+              h('div', { 'data-bd-txt': '' },
+                h('div', { 'data-bd-lb': '' }, '自己去搜（自己出关键词）'),
+                h('div', { 'data-bd-ds': '' }, selfSearch ? '开着：每轮它自己出 2~4 个词去搜，也翻首页推荐' : '关着：只翻首页推荐流，不自己搜')),
+              h('button', {
+                'data-bd-btn': '',
+                className: 'ghost sm',
+                onClick: () => saveOne('wildSelfSearch', !selfSearch, '自己去搜'),
+              }, selfSearch ? '改成只翻首页' : '让它自己搜')),
             h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
               '⚠️ 打开 = 真的发评论/动态、真投币。频率越高越容易被 B站 限流；真被风控会自动冷却 24 小时。')),
           Card({ title: '野的节奏', sub: '默认值是替你定好的保险参数，想调也行，别调太疯' },
