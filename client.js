@@ -976,7 +976,7 @@ window.__ModuleLoader__.load({
         try {
           const inter = BILI_AUTO.applyInteractions === true
           if (!window.confirm('应用自动模式？\n\n会改：每天上限 / 每轮条数 / 每轮间隔 / 每轮看多少条 / 运行时段 / 定时值守。'
-            + (inter ? '\n\n⚠️ 还会覆盖「安全防护」页的：自动评论 / 点赞 / 投币 / 回评论 / 私信。' : '\n\n「安全防护」页的互动开关不会动。'))) return
+            + (inter ? '\n\n⚠️ 还会覆盖「安全防护」页的：自动评论 / 点赞 / 回评论 / 私信。' : '\n\n「安全防护」页的互动开关不会动。'))) return
           const r = await jpost('/automode/apply', { preset: BILI_AUTO.preset, overrides: autoOverrides(), applyInteractions: inter })
           if (!r || !r.ok) return toast_('应用失败：' + ((r && r.error) || ''))
           const notes = (r.notes || []).join('；')
@@ -2145,7 +2145,7 @@ window.__ModuleLoader__.load({
                 style: { marginTop: '2px' },
                 onChange: (e) => { BILI_AUTO.applyInteractions = e.target.checked; planAuto(); setState((x) => (x ? { ...x } : x)) },
               }),
-              h('span', null, '顺便按这个档位设置「互动开关」（自动评论 / 点赞 / 投币 / 回评论 / 私信）',
+              h('span', null, '顺便按这个档位设置「互动开关」（自动评论 / 点赞 / 回评论 / 私信）',
                 h('span', { style: { color: 'var(--t3)' } }, '　不勾就完全不动「安全防护」页的设置'))),
             h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: applyAuto }, '应用这套配置'),
@@ -3503,11 +3503,11 @@ window.__ModuleLoader__.load({
             })),
           Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
             h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
-              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/投币/三连/评论'].join(' · '))))
+              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/三连/评论（投币只记提醒）'].join(' · '))))
       }
 
       /* ===== 为所欲为（wild）：独立顶层页（2026-11-13 新增） =====
-       * 打开 = 全自动自己逛 B站（首页推荐流自己挑，不靠关键词），评论/点赞/投币/发动态，直到关掉。
+       * 打开 = 全自动自己逛 B站（首页推荐流自己挑，不靠关键词），评论/点赞/发动态（投币不代投），直到关掉。
        * 与 QQ 遥控的「为所欲为」是两回事：QQ 那边是有人下令才动。 */
       function renderWild() {
         const on = !!cfg.wildMode
@@ -3533,11 +3533,11 @@ window.__ModuleLoader__.load({
         return h('div', {},
           Card({
             title: '为所欲为模式',
-            sub: '打开它就自己逛 B站：自己想搜什么就去搜、自己挑视频、自己评论/点赞/投币/发动态，直到你关掉',
+            sub: '打开它就自己逛 B站：自己想搜什么就去搜、自己挑视频、自己评论/点赞/发动态（投币不代投），直到你关掉',
             right: Tag({ c: on ? 'red' : 'gray', children: on ? '野着跑中' : '关着' }),
           },
             h('div', { 'data-bd-callout': '' },
-              '它怎么干活：不用你给关键词——每轮它自己出一批「今天想搜什么」，拿这些词去B站搜，同时也翻首页推荐流；挑中就评论，顺手点赞+投币（受每日投币上限约束），还会发一条图文动态。',
+              '它怎么干活：不用你给关键词——每轮它自己出一批「今天想搜什么」，拿这些词去B站搜，同时也翻首页推荐流；挑中就评论，顺手点赞，还会发一条图文动态；投币不代投（B站要人机验证），想投的去「待手动投币」按提醒自己投。',
               '\n保险在后台定死了：触发风控冷却就停手、每天有总量上限、每条都记进「评论」页和日报；总览里的「自动值守总开关」一关，它也跟着停。'),
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' } },
               h('button', {
@@ -3558,7 +3558,7 @@ window.__ModuleLoader__.load({
                 onClick: () => saveOne('wildSelfSearch', !selfSearch, '自己去搜'),
               }, selfSearch ? '改成只翻首页' : '让它自己搜')),
             h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
-              '⚠️ 打开 = 真的发评论/动态、真投币。频率越高越容易被 B站 限流；真被风控会自动冷却 24 小时。')),
+              '⚠️ 打开 = 真的发评论/动态。频率越高越容易被 B站 限流；真被风控会自动冷却 24 小时。')),
           Card({ title: '野的节奏', sub: '默认值是替你定好的保险参数，想调也行，别调太疯' },
             numRow('每天最多挑几条', 'wildPerDay', perDay, ' 条', 1, 500),
             numRow('每轮挑几条', 'wildPerRound', perRound, ' 条', 1, 50),
