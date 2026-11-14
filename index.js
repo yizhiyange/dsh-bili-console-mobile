@@ -1957,8 +1957,8 @@ export function apply(ctx, _config) {
             out.coin = { ok: hitOk(r), code: r?.code }
             if (!out.coin.ok) {
               const msg = String(r?.error || r?.message || '接口说不成')
-              out.errors.push('投币：' + (/(-401|非法访问|csrf)/i.test(msg)
-                ? '被B站拦了（-401 非法访问，多半是登录凭证缺 buvid 指纹，去面板重新扫码登录一次）'
+              out.errors.push('投币：' + (/(-401|非法访问|-403|账号异常)/i.test(msg)
+                ? 'B站要人机验证 / 账号被风控了（-401 非法访问、-403 账号异常）：投币这步插件替不了你，去 B站 App 手动投一次，或隔一天再试'
                 : msg.slice(0, 60)))
             }
           } catch (e) { out.coin = { ok: false }; out.errors.push('投币异常：' + String(e?.message || e).slice(0, 60)) }
