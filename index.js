@@ -417,6 +417,47 @@ const ASSIST_KEYS = new Set([
   'lowPower', 'liteUI', 'useAssets', 'autoLike', 'autoCoin', 'transcribe', 'dshSession',
 ])
 
+/**
+ * 找本机 AstrBot 的桥接插件配置（同机才可能真写；跨机器面板看不到别人的盘）。
+ * 只在「可能放 AstrBot 的目录」里翻，限层数 + 限目录数，绝不扫全盘。
+ */
+const ASTR_CFG_NAME = 'astrbot_plugin_bili_bridge_config.json'
+function findAstrbotConfigs() {
+  const out = []
+  const seen = new Set()
+  let budget = 2500
+  const walk = (dir, depth) => {
+    if (out.length >= 12 || depth < 0 || budget <= 0) return
+    let ents
+    try { ents = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of ents) {
+      if (out.length >= 12 || budget <= 0) return
+      const p = join(dir, e.name)
+      if (seen.has(p)) continue
+      seen.add(p); budget--
+      if (e.isFile()) {
+        if (e.name === ASTR_CFG_NAME) {
+          let cur = {}
+          try { cur = JSON.parse(readFileSync(p, 'utf8').replace(/^\uFEFF/, '') || '{}') } catch { cur = {} }
+          out.push({
+            path: p,
+            api_base: String(cur.api_base || ''),
+            panel_base: String(cur.panel_base || ''),
+            hasToken: !!String(cur.token || '').trim(),
+            tokenTail: String(cur.token || '').slice(-4),
+          })
+        }
+      } else if (e.isDirectory() && depth > 0 && /^(astrbot.*|data|config|app|plugins|srv|opt)$/i.test(e.name)) {
+        walk(p, depth - 1)
+      }
+    }
+  }
+  for (const s of [homedir(), join(homedir(), 'Desktop'), '/opt', '/srv', '/app', '/root']) {
+    if (existsSync(s)) walk(s, 4)
+  }
+  return out
+}
+
 async function runAssistantTool(home, tool, args, ctx = {}) {
   const c = loadConfig(home)
   switch (tool) {
@@ -824,6 +865,38 @@ export function apply(ctx, _config) {
         best: best.host,
         url: 'http://' + best.host + ':' + port,
       })
+    }
+    // 同机检测 + 写入（2026-11-14）：面板和机器人在同一台机器时能真找到并写进去。
+    // 跨机器面板看不到别人的盘（尤其 AstrBot 跑在 Docker 里），找不到就老实说找不到，不装懂。
+    if (req.method === 'POST' && path === '/remote/detect') {
+      const found = findAstrbotConfigs()
+      const mcpCfg = join(homedir(), '.dsh', 'bili-console', 'config.json')
+      return sendJson(res, 200, {
+        ok: true,
+        found,
+        mcp: { path: mcpCfg, exists: existsSync(mcpCfg) },
+        hint: found.length ? '' : '本机没找到 AstrBot 的桥接配置：面板和 AstrBot 不在同一台机器（或 AstrBot 在 Docker 里）时，只能把扫描结果复制过去手填。',
+      })
+    }
+    if (req.method === 'POST' && path === '/remote/apply') {
+      const b = await readBody(req)
+      const want = String(b.path || '')
+      const hit = findAstrbotConfigs().find((x) => x.path === want)
+      if (!hit) return sendJson(res, 200, { ok: false, error: '这个路径不是刚检测到的 AstrBot 配置：先点一次「写入本机」重新检测' })
+      const snap = remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)
+      const apiBase = 'http://127.0.0.1:' + (Number(snap.port) || 8792)
+      const token = String(snap.token || '')
+      try {
+        let cur = {}
+        try { cur = JSON.parse(readFileSync(want, 'utf8').replace(/^\uFEFF/, '') || '{}') } catch { cur = {} }
+        const next = { ...cur, api_base: apiBase, token }
+        if (!next.panel_base) next.panel_base = 'http://127.0.0.1:8790/api/bili-console'
+        writeFileSync(want, JSON.stringify(next, null, 2) + '\n')
+        logLine(home, '已写入本机 AstrBot 配置：' + want)
+        return sendJson(res, 200, { ok: true, path: want, apiBase, tokenLen: token.length })
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: '写不进去：' + String(e?.message || e).slice(0, 100) })
+      }
     }
     // 手动发一条测试消息进 DSH 会话（走 DSH 本机网页接口，和 qq 机器人同一条路）
     if (req.method === 'POST' && path === '/dsh/push') {
@@ -1847,7 +1920,7 @@ export function apply(ctx, _config) {
         const out = ok
           ? { ok: true, bvid: bv, text, rpid: (r && (r.rpid ?? r.rpid_str)) || 0 }
           : { ok: false, bvid: bv, text, code: r && r.code, error: /(-401|非法访问|csrf)/i.test(msg) ? '被B站拦了（-401 非法访问，先去面板重新扫码登录）' : (msg || '接口说不成') }
-        logLine(home, `单条评论 ${bv}：${out.ok ? '成功' : out.error}`)
+        logLine(home, `单条评论 ${bv}：${out.ok ? ('成功 rpid=' + out.rpid) : out.error}`)
         return sendJson(res, 200, out)
       } catch (e) {
         return sendJson(res, 200, { ok: false, error: '评论异常：' + String(e?.message || e).slice(0, 100) })

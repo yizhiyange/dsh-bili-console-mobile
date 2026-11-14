@@ -3406,6 +3406,22 @@ window.__ModuleLoader__.load({
           try { navigator.clipboard.writeText(txt); toast_('已复制') }
           catch { toast_('复制失败，手动选中吧') }
         }
+        // 同机才有的福利：这台机器上真装了 AstrBot 的话，直接把配置写进去，不用手抄
+        const writeLocal = async () => {
+          try {
+            const d = await jpost('/remote/detect', {})
+            const hit = (d && d.found && d.found[0]) || null
+            if (!hit) { toast_((d && d.hint) || '这台机器上没找到 AstrBot 的桥接配置'); return }
+            const w = await jpost('/remote/apply', { path: hit.path })
+            if (!w.ok) { toast_('写入失败：' + (w.error || '')); return }
+            const box = document.querySelector('[data-bd-scanout]')
+            if (box) {
+              box.value = (box.value ? box.value + '\n\n' : '') + '[已写入本机] ' + w.path
+                + '\napi_base = ' + w.apiBase + '\ntoken = 已写入（' + (w.tokenLen || 0) + ' 位）'
+            }
+            toast_('已写入：' + w.path + '（AstrBot 里重载一次插件就生效）')
+          } catch (e) { toast_('写入失败：' + (e && e.message ? e.message : e)) }
+        }
         return h('div', {},
           Card({
             title: 'QQ 接入（遥控小门）',
@@ -3448,9 +3464,10 @@ window.__ModuleLoader__.load({
             h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doScan }, '🔍 扫描并生成'),
               h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: copyScan }, '复制全部'),
-              h('span', { style: { fontSize: '11px', color: 'var(--t2)' } }, '扫描会分别试 127.0.0.1 和每张网卡的地址')),
+              h('button', { 'data-bd-btn': '', className: 'outline sm', onClick: writeLocal }, '📝 写入本机 AstrBot'),
+              h('span', { style: { fontSize: '11px', color: 'var(--t2)' } }, '扫描会分别试 127.0.0.1 和每张网卡的地址；「写入本机」只在面板和 AstrBot 同机时找得到配置文件')),
             h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
-              'AstrBot 插件的设置在哪：打开 AstrBot 控制台（默认 6185 端口）→ 插件管理 → astrbot_plugin_bili_bridge → 设置，里面就两个框（api_base 和 token），把下面生成的粘进去。'),
+              'AstrBot 插件的设置在哪：打开 AstrBot 控制台（默认 6185 端口）→ 插件管理 → astrbot_plugin_bili_bridge → 设置，里面就两个框（api_base 和 token），把下面生成的粘进去。AstrBot 跑在 Docker 里时，「写入本机」一般找不到它的盘，还是复制粘贴。'),
             h('textarea', {
               'data-bd-scanout': '',
               readOnly: true,

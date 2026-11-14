@@ -254,6 +254,8 @@ tail -5 ~/.dsh/bili-console/duty.log
 
 面板「QQ 接入」页还多了个 **一键对接**：点「扫描并生成」，它会分别试 `127.0.0.1` 和每张网卡的地址，告诉你哪个真能打到门卫，然后把 AstrBot 插件要填的 `api_base` / `token`、qq-bridge 的说明、以及一条自测 curl 全拼好，点「复制全部」就能贴。
 
+**同机才有的「写入本机」**：面板和 AstrBot 装在同一台机器时，点「📝 写入本机 AstrBot」，它会真去找到 `data/config/astrbot_plugin_bili_bridge_config.json` 并把 `api_base` / `token` 写进去，AstrBot 里重载一次插件就生效。面板在另一台机器、或 AstrBot 跑在 Docker 里时找不到它的盘，会明确告诉你「没找到」，不会装懂——那种情况只能复制粘贴。
+
 > AstrBot 插件设置在哪：打开 AstrBot 控制台（默认 6185）→ 插件管理 → `astrbot_plugin_bili_bridge` → 设置，里面只有 `api_base` 和 `token` 两个关键框。
 > qq-bridge 不用填：`mcp-bili.js` 会自己读本机配置里的口令；机器人不在同一台机器时才需要设 `BILI_CMD_URL` / `BILI_TOKEN`。
 > 既不是 AstrBot 也不是 MCP 系？扫描结果最后一段是裸 HTTP 示例（`POST /cmd` + `X-Bili-Token` 头），任何能发请求的框架照那个接就行，回包里的 `reply` 直接丢给群友。
