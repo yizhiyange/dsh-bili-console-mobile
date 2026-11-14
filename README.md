@@ -255,6 +255,7 @@ tail -5 ~/.dsh/bili-console/duty.log
 
 > AstrBot 插件设置在哪：打开 AstrBot 控制台（默认 6185）→ 插件管理 → `astrbot_plugin_bili_bridge` → 设置，里面只有 `api_base` 和 `token` 两个关键框。
 > qq-bridge 不用填：`mcp-bili.js` 会自己读本机配置里的口令；机器人不在同一台机器时才需要设 `BILI_CMD_URL` / `BILI_TOKEN`。
+> 既不是 AstrBot 也不是 MCP 系？扫描结果最后一段是裸 HTTP 示例（`POST /cmd` + `X-Bili-Token` 头），任何能发请求的框架照那个接就行，回包里的 `reply` 直接丢给群友。
 
 ## 开发
 
