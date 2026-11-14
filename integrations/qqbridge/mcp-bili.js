@@ -99,6 +99,27 @@ server.tool(
 );
 
 server.tool(
+  'bili_like',
+  '给指定的这一条B站视频点赞。群友丢来 BV 号或链接说「点个赞」时用；只动这一条，不会顺带评论或投币。',
+  { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句') },
+  async ({ bvid }) => { try { return text(await cmd('like', { bvid: String(bvid || '') }, 30000)); } catch (e) { return fail(e); } },
+);
+
+server.tool(
+  'bili_coin',
+  '给指定的这一条B站视频投币（1~2 枚，默认 1）。会真的花掉这个账号的硬币，只在群友明确要求时才用。',
+  { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句'), num: z.number().describe('投几枚，1 或 2，默认 1').optional() },
+  async ({ bvid, num }) => { try { return text(await cmd('coin', { bvid: String(bvid || ''), num: Number(num) || 1 }, 30000)); } catch (e) { return fail(e); } },
+);
+
+server.tool(
+  'bili_triple',
+  '对指定视频一键三连：点赞 + 投币 + 收藏。这是真动作，会同时改点赞、硬币、收藏夹；只在群友明确说「三连」时用。',
+  { bvid: z.string().describe('BV 号，或包含 BV 号的链接/整句') },
+  async ({ bvid }) => { try { return text(await cmd('triple', { bvid: String(bvid || '') }, 60000)); } catch (e) { return fail(e); } },
+);
+
+server.tool(
   'bili_run_round',
   '让刷B站分身现在去刷一轮（试跑模式，不会往B站发任何东西）。一轮要几分钟，一小时最多一两次，别连着调。',
   {},

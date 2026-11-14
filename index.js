@@ -26,6 +26,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { homedir } from 'node:os'
+import net from 'node:net'
 import {
   stateDirOf, ensureDir, loadConfig, saveConfig, loadState, saveState, parseSeen,
   readReport, dayKey, inWindow, WINDOWS, scheduleState,
@@ -43,7 +44,7 @@ import { asrStatus, asrReadiness, asrDiag, transcribeFile, transcribeCloud } fro
 import { appendRun, listRuns, clearRuns, runStats } from './lib/runs.mjs'
 import { buildSystemPrompt, parseAssistant } from './lib/assistant.mjs'
 import { PRESETS, computeAutoConfig, describeAuto, estimateDay, suggestInteractions, interactionDiff, scheduleLabel, activeHours, applyAutoMode, warningsFor, adjustmentsFor } from './lib/automode.mjs'
-import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones, searchVideos } from './lib/bili.mjs'
+import { loginStatus, LoginSession, ALLOWED_TOOLS, newClient, homeCredFile, vendorCredFile, deleteComment, syncCredToVendor, sendDynamic, uploadVideo, uploadVideoMulti, sendOpus, videoZones, searchVideos, likeVideo, coinVideo, addFavorite, favoriteLists } from './lib/bili.mjs'
 import { BiliMcp } from './lib/mcpc.mjs'
 import { runRound } from './lib/round.mjs'
 import { checkDm, startDmWatcher } from './lib/dm.mjs'
@@ -791,6 +792,38 @@ export function apply(ctx, _config) {
       // 立刻生效，不等 5 秒轮询；current() 会在第一次开启时自动铸口令
       try { remoteCtl?.sync() } catch {}
       return sendJson(res, 200, { ok: true, changed, ...(remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)) })
+    }
+    // 一键对接：扫一遍本机所有网卡地址，看哪个真能打到门卫，顺便把该填的东西算出来
+    if (req.method === 'POST' && path === '/remote/scan') {
+      const snap = remoteCtl ? remoteCtl.snapshot() : remoteSnapshot(home)
+      const port = Number(snap.port) || 8792
+      const hosts = ['127.0.0.1']
+      for (const u of (snap.urls || [])) {
+        const h = String(u).replace(/^http:\/\//, '').split(':')[0]
+        if (h && !hosts.includes(h)) hosts.push(h)
+      }
+      const probe = (host) => new Promise((resolve) => {
+        const s = net.connect({ host, port })
+        const done = (ok) => { try { s.destroy() } catch { /* noop */ } ; resolve({ host, ok }) }
+        s.setTimeout(1200)
+        s.once('connect', () => done(true))
+        s.once('timeout', () => done(false))
+        s.once('error', () => done(false))
+      })
+      const addrs = []
+      for (const h of hosts) addrs.push(await probe(h))
+      const best = addrs.find((a) => a.ok) || addrs[0] || { host: '127.0.0.1', ok: false }
+      return sendJson(res, 200, {
+        ok: true,
+        on: !!snap.on,
+        listening: !!snap.listening,
+        port,
+        token: snap.token || '',
+        readOnly: !!snap.readOnly,
+        addrs,
+        best: best.host,
+        url: 'http://' + best.host + ':' + port,
+      })
     }
     // 手动发一条测试消息进 DSH 会话（走 DSH 本机网页接口，和 qq 机器人同一条路）
     if (req.method === 'POST' && path === '/dsh/push') {
@@ -1791,6 +1824,72 @@ export function apply(ctx, _config) {
         const items = normalizeSearchItems(raw).slice(0, 20)
         logLine(home, `搜视频「${q}」：${items.length} 条`)
         return sendJson(res, 200, { ok: true, q, count: items.length, items })
+      } catch (e) {
+        return sendJson(res, 200, { ok: false, error: String(e?.message ?? e).slice(0, 160) })
+      } finally { try { cli && cli.close() } catch { /* noop */ } }
+    }
+    // ---- 单条互动：点赞 / 投币 / 三连（群友点名一条视频，立刻动手）----
+    // 有意绕开 autoLike / autoCoin / coinPerDay / 「值得看」门槛：那些是自动值守时的克制规则，
+    // 这里是人明确指名的单次请求。「只看不干」门禁在外层 remote 里仍然生效。
+    if (req.method === 'POST' && (path === '/act/like' || path === '/act/coin' || path === '/act/triple')) {
+      const b = await readBody(req)
+      const bv = String(b.bvid || '').trim().slice(0, 24)
+      if (!/^BV[0-9A-Za-z]{10}$/.test(bv)) return sendJson(res, 200, { ok: false, error: 'BV 号不对（形如 BV1xxxxxxxxx，共 12 位）' })
+      if (!loginStatus(home).loggedIn) return sendJson(res, 200, { ok: false, error: '还没登录 B站' })
+      // 65006「重复点赞」= 早就点过了，算达成；别让群友以为失败
+      const dupOk = (r) => /重复点赞|已经点赞|重复投币|已经投过/.test(String(r?.error || r?.message || ''))
+      const hitOk = (r) => !!r && ((!r.error && (r.code === undefined || Number(r.code) === 0)) || dupOk(r))
+      let cli = null
+      try {
+        cli = newClient(loadConfig(home), home)
+        const out = { ok: true, bvid: bv, errors: [] }
+        const wantLike = path !== '/act/coin'
+        const wantCoin = path !== '/act/like'
+        const wantFav = path === '/act/triple'
+        if (wantLike) {
+          try {
+            const r = await likeVideo(cli, bv, 1)
+            out.like = { ok: hitOk(r), code: r?.code }
+            if (!out.like.ok) out.errors.push('点赞：' + String(r?.error || r?.message || '接口说不成').slice(0, 60))
+          } catch (e) { out.like = { ok: false }; out.errors.push('点赞异常：' + String(e?.message || e).slice(0, 60)) }
+        }
+        if (wantCoin) {
+          try {
+            const r = await coinVideo(cli, bv, Math.max(1, Math.min(2, Number(b.num) || 1)), 0)
+            out.coin = { ok: hitOk(r), code: r?.code }
+            if (!out.coin.ok) {
+              const msg = String(r?.error || r?.message || '接口说不成')
+              out.errors.push('投币：' + (/(-401|非法访问|csrf)/i.test(msg)
+                ? '被B站拦了（-401 非法访问，多半是登录凭证缺 buvid 指纹，去面板重新扫码登录一次）'
+                : msg.slice(0, 60)))
+            }
+          } catch (e) { out.coin = { ok: false }; out.errors.push('投币异常：' + String(e?.message || e).slice(0, 60)) }
+        }
+        if (wantFav) {
+          try {
+            let mediaId = Number(loadConfig(home).favFolderId) || 0
+            if (!mediaId) {
+              const fl = await favoriteLists(cli)
+              const arr = Array.isArray(fl) ? fl : (fl?.items || fl?.lists || fl?.folders || fl?.data || [])
+              const first = Array.isArray(arr) ? arr.find((x) => Number(x?.media_id || x?.id || x?.fid) > 0) : null
+              mediaId = first ? Number(first.media_id || first.id || first.fid) : 0
+            }
+            if (!mediaId) {
+              out.fav = { ok: false }
+              out.errors.push('收藏：没找到可用收藏夹（去面板「日报详略 · 收藏夹」填一个 ID）')
+            } else {
+            const r = await addFavorite(cli, bv, mediaId)
+            out.fav = { ok: hitOk(r), code: r?.code, mediaId }
+            if (!out.fav.ok) {
+              const msg = String(r?.error || r?.message || '接口说不成')
+              out.errors.push('收藏：' + (/(-401|非法访问)/i.test(msg) ? '被B站拦了（-401 非法访问，先去面板重新扫码登录）' : msg.slice(0, 60)))
+            }
+            }
+          } catch (e) { out.fav = { ok: false }; out.errors.push('收藏异常：' + String(e?.message || e).slice(0, 60)) }
+        }
+        if (out.errors.length) { out.ok = false; out.error = out.errors.join('；') }
+        logLine(home, `单条互动 ${path} ${bv}：${out.errors.length ? out.errors.join('；') : '全部成功'}`)
+        return sendJson(res, 200, out)
       } catch (e) {
         return sendJson(res, 200, { ok: false, error: String(e?.message ?? e).slice(0, 160) })
       } finally { try { cli && cli.close() } catch { /* noop */ } }

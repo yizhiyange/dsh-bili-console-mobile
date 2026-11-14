@@ -1,5 +1,5 @@
 /**
- * dsh-bili-console-mobile —— 浏览器半端（「设置」里的一个 section）
+ * dsh-bili-console —— 浏览器半端（「设置」里的一个 section）
  * ============================================================================
  * ⭐ 这一版**直接搬运我们自己的 web/console.html（刷B站观测台）**：7 个页面、UI、功能
  *    全部对齐自研控制台，不是抄第三方插件（dsh-bili-scroll 那套骨架已经扔了）。
@@ -22,7 +22,7 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-bili-console-mobile',
+  id: 'dsh-bili-console',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -3368,6 +3368,38 @@ window.__ModuleLoader__.load({
           try { navigator.clipboard.writeText(r.token || ''); toast_('口令已复制') }
           catch { toast_('复制失败，手动选中口令复制吧') }
         }
+        // 一键对接：扫本机网卡 → 哪个地址真能打到门卫 → 拼好各家机器人要填的东西
+        const doScan = async () => {
+          try {
+            const s = await jpost('/remote/scan', {})
+            const token = s.token || ''
+            const url = s.url || ('http://127.0.0.1:' + (s.port || 8792))
+            const L = []
+            L.push('[门卫] ' + (s.listening ? '在监听' : '没在监听') + ' · 端口 ' + s.port + ' · ' + (s.readOnly ? '只看不干（只读）' : '可写'))
+            L.push('[地址] ' + url)
+            if ((s.addrs || []).length) L.push('[扫到] ' + s.addrs.map((a) => a.host + (a.ok ? ' ✅' : ' ❌')).join('   '))
+            L.push('')
+            L.push('—— AstrBot 插件 astrbot_plugin_bili_bridge ——')
+            L.push('api_base = ' + url)
+            L.push('token = ' + (token || '（先点「打开小门」，口令会自动生成）'))
+            L.push('')
+            L.push('—— qq-bridge / MCP ——')
+            L.push('不用填：mcp-bili.js 自己读本机配置里的口令（机器人不在同一台机器才要设 BILI_CMD_URL / BILI_TOKEN）')
+            L.push('')
+            L.push('—— 裸 HTTP 自测 ——')
+            L.push('curl -X POST ' + url + '/cmd -H "Content-Type: application/json" -H "X-Bili-Token: ' + (token || '<口令>') + '" -d \'{"action":"help"}\'')
+            const box = document.querySelector('[data-bd-scanout]')
+            if (box) box.value = L.join('\n')
+            toast_('扫完了，下面这段直接复制')
+          } catch (e) { toast_('扫失败：' + (e && e.message ? e.message : e)) }
+        }
+        const copyScan = () => {
+          const box = document.querySelector('[data-bd-scanout]')
+          const txt = box ? box.value : ''
+          if (!txt) { toast_('先点「扫描并生成」'); return }
+          try { navigator.clipboard.writeText(txt); toast_('已复制') }
+          catch { toast_('复制失败，手动选中吧') }
+        }
         return h('div', {},
           Card({
             title: 'QQ 接入（遥控小门）',
@@ -3406,9 +3438,23 @@ window.__ModuleLoader__.load({
               '⚠️ 口令等于这扇门的钥匙：只发给机器人插件，别发到群里。'),
             h('div', { style: { marginTop: '6px', fontSize: '12px', color: 'var(--t2)' } },
               '怎么接？仓库的 integrations/ 里有现成的：AstrBot 插件、MCP 适配器（qq-bridge / SnowLuma 等）、以及纯 HTTP 示例——照着填口令就行，不用另装服务。')),
+          Card({ title: '一键对接（扫一下，照着抄）', sub: '算出哪个地址真能打到门卫，再把各家机器人该填的东西拼好；不用自己拼 IP 和口令' },
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doScan }, '🔍 扫描并生成'),
+              h('button', { 'data-bd-btn': '', className: 'ghost sm', onClick: copyScan }, '复制全部'),
+              h('span', { style: { fontSize: '11px', color: 'var(--t2)' } }, '扫描会分别试 127.0.0.1 和每张网卡的地址')),
+            h('div', { style: { marginTop: '8px', fontSize: '12px', color: 'var(--t2)' } },
+              'AstrBot 插件的设置在哪：打开 AstrBot 控制台（默认 6185 端口）→ 插件管理 → astrbot_plugin_bili_bridge → 设置，里面就两个框（api_base 和 token），把下面生成的粘进去。'),
+            h('textarea', {
+              'data-bd-scanout': '',
+              readOnly: true,
+              rows: 9,
+              placeholder: '点「扫描并生成」，这里会出现可复制的配置',
+              style: { width: '100%', marginTop: '8px', fontFamily: 'ui-monospace, monospace', fontSize: '12px', lineHeight: 1.6 },
+            })),
           Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
             h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
-              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论'].join(' · '))))
+              ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/投币/三连'].join(' · '))))
       }
 
       /* ===== 为所欲为（wild）：独立顶层页（2026-11-13 新增） =====
