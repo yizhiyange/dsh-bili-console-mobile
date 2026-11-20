@@ -3383,6 +3383,27 @@ window.__ModuleLoader__.load({
               h('button', { 'data-bd-btn': '', className: 'primary sm', onClick: doVideo }, '启动投稿'))))
       }
 
+      // SnowLuma / 通用 MCP 的接法文本：同机最省事，跨机器才要手填。渲染和复制共用一份，避免两处写歪
+      const qqMcpConfig = (r) => {
+        const port = String((r && r.port) || 8792)
+        const tk = (r && r.token) || '（打开小门后自动生成）'
+        return '[门卫地址] http://127.0.0.1:' + port + '\n' +
+          '[口令] ' + tk + '\n\n' +
+          '—— SnowLuma / qq-bridge / 任意 MCP 宿主（同一台机器）——\n' +
+          '走仓库里的 integrations/qqbridge/mcp-bili.js（标准 MCP 适配器）。\n' +
+          '同机时口令会自动读本机配置，地址和口令都不用手填。\n' +
+          '在宿主（Claude Desktop / Cline / 其它 MCP 客户端）里加这个 server：\n' +
+          '{\n' +
+          '  "mcpServers": { "bili": {\n' +
+          '    "command": "node",\n' +
+          '    "args": ["<插件目录>/integrations/qqbridge/mcp-bili.js"]\n' +
+          '  } }\n' +
+          '}\n\n' +
+          '只有机器人装在另一台机器时，才需要设环境变量：\n' +
+          'BILI_CMD_URL=http://<插件机器的局域网IP>:' + port + '\n' +
+          'BILI_TOKEN=<上面那把口令>'
+      }
+
       /* ===== QQ 接入（遥控小门）：独立顶层页（2026-11-08 用户要求从环境页拆出来） ===== */
       function renderQQ() {
         const r = state?.remote || {}
@@ -3393,6 +3414,11 @@ window.__ModuleLoader__.load({
         const copyToken = () => {
           try { navigator.clipboard.writeText(r.token || ''); toast_('口令已复制') }
           catch { toast_('复制失败，手动选中口令复制吧') }
+        }
+        const copyMcp = () => {
+          const cfg = qqMcpConfig(state?.remote || {})
+          try { navigator.clipboard.writeText(cfg); toast_('SnowLuma/MCP 配置已复制') }
+          catch { toast_('复制失败，手动选中吧') }
         }
         // 一键对接：扫本机网卡 → 哪个地址真能打到门卫 → 拼好各家机器人要填的东西
         const doScan = async () => {
@@ -3501,6 +3527,12 @@ window.__ModuleLoader__.load({
               placeholder: '点「扫描并生成」，这里会出现可复制的配置',
               style: { width: '100%', marginTop: '8px', fontFamily: 'ui-monospace, monospace', fontSize: '12px', lineHeight: 1.6 },
             })),
+          Card({ title: 'SnowLuma / 通用 MCP（同机最省事）', sub: '和 AstrBot 一样有专门的位置：地址 + 口令一次给全，同机连填都不用填' },
+            h('div', { style: { fontSize: '12px', color: 'var(--t2)', marginBottom: '8px' } },
+              'SnowLuma、qq-bridge、Claude Desktop 这些 MCP 宿主，走的是仓库里的 integrations/qqbridge/mcp-bili.js。同一台机器上它自己读口令，地址和口令都不用手填——下面这段直接复制给宿主就行。'),
+            h('div', { style: { fontFamily: 'ui-monospace, monospace', fontSize: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '260px', overflow: 'auto' } },
+              qqMcpConfig(r)),
+            r.token ? h('button', { className: 'ghost sm', onClick: copyMcp, style: { marginTop: '10px' } }, '复制 SnowLuma/MCP 配置') : null),
           Card({ title: '门里允许干什么（白名单）', sub: '改配置、拿密钥这类事，门里根本没有对应动作' },
             h('div', { style: { fontSize: '12.5px', color: 'var(--t2)', lineHeight: 1.8 } },
               ['看状态', '看最近刷的视频', '看发过的评论/动态', '看日报', '命令刷一轮', '试跑（只挑不发）', '停止', '发动态', '查回私信', '撤回最近几条评论', '给指定视频点赞/三连/评论（投币只记提醒）'].join(' · '))))
